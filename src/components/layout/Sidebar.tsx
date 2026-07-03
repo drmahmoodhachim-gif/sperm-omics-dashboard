@@ -23,14 +23,14 @@ const navItems = [
 
 export function Sidebar({ activePath }: { activePath: string }) {
   return (
-    <aside className="fixed inset-y-0 left-0 z-30 flex w-64 flex-col border-r border-border bg-card">
+    <aside className="fixed inset-y-0 left-0 z-30 flex w-64 flex-col border-r border-border bg-gradient-to-b from-card to-muted/30 shadow-sm">
       <div className="border-b border-border px-6 py-5">
-        <div className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md">
             <BarChart3 className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-sm font-bold leading-tight">SpermOmics</h1>
+            <h1 className="text-base font-bold leading-tight tracking-tight">SpermOmics</h1>
             <p className="text-xs text-muted-foreground">Resource Library</p>
           </div>
         </div>

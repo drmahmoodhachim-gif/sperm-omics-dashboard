@@ -19,7 +19,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} ${serif.variable} ${mono.variable}`}>
+      <body
+        className={`${inter.variable} ${serif.variable} ${mono.variable} font-sans`}
+      >
         {children}
       </body>
     </html>

@@ -1,7 +1,5 @@
 name: Netlify Production Deploy
 
-# Cloud builds on GitHub runners (avoids local disk limits).
-# Uses Netlify site env vars during `netlify build`.
 on:
   push:
     branches: [master]
@@ -24,14 +22,9 @@ jobs:
 
       - run: npm ci
 
-      - name: Netlify build (uses site env vars)
-        run: npx netlify-cli build
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-
-      - name: Deploy to production
-        run: npx netlify-cli deploy --prod --no-build
+      # Single command ensures CSS/JS static assets upload with the deploy
+      - name: Build and deploy to Netlify
+        run: npx netlify-cli deploy --prod --build
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
