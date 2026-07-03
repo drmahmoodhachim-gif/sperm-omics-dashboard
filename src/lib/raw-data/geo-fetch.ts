@@ -170,6 +170,11 @@ export async function fetchGeoSeriesMatrix(
   if (fileUrl) {
     const url = toHttps(fileUrl);
     const matrixUrl = geoSeriesMatrixUrl(acc);
+
+    if (matrixUrl && url === toHttps(matrixUrl)) {
+      return fetchGeoSeriesMatrix(acc);
+    }
+
     let metaSamples: ReturnType<typeof parseSeriesMatrixMetadata>["samples"] | undefined;
 
     if (matrixUrl) {
