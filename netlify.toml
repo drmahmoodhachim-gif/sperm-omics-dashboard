@@ -1,0 +1,13 @@
+[build]
+  command = "npm run build"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Cache-Control = "public, s-maxage=300, stale-while-revalidate=600"
