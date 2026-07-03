@@ -1,54 +1,63 @@
 # Deploy: GitHub + Netlify + Supabase
 
-## 1. Supabase setup (one-time)
+## Live site
 
-1. Open your [Supabase Dashboard](https://supabase.com/dashboard) → SQL Editor
-2. Run the migration: `supabase/migrations/20260703_performance.sql`
-3. Copy from **Project Settings → API**:
-   - Project URL → `NEXT_PUBLIC_SUPABASE_URL`
-   - `anon` key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - `service_role` key → `SUPABASE_SERVICE_ROLE_KEY` (keep secret)
+- **Production:** https://sperm-omics-dashboard.netlify.app
+- **Netlify project:** `sperm-omics-dashboard` (`512e6fa5-d8d9-4062-8340-7adbc199a141`)
+- **GitHub:** https://github.com/drmahmoodhachim-gif/sperm-omics-dashboard (branch `master`)
 
-4. Sync data locally:
+## Auto-deploy (GitHub Actions → Netlify cloud)
+
+Pushes to `master` run `.github/workflows/netlify-deploy.yml`:
+
+1. Build on **GitHub-hosted runners** (no local disk needed)
+2. `netlify build` pulls **production env vars** from the Netlify site
+3. `netlify deploy --prod --no-build` publishes to production
+
+One-time setup (already done if secrets exist):
+
 ```bash
-npm run ingest          # fetch GEO, PRIDE, PubMed, SperMD
-npm run sync:supabase   # push to Supabase
+node scripts/setup-github-netlify-secrets.js
 ```
 
-## 2. GitHub
+Required GitHub secrets: `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`
+
+Optional: link GitHub natively in Netlify UI for deploy previews:
+https://app.netlify.com/projects/sperm-omics-dashboard/link
+
+## Netlify environment variables (production)
+
+Set in **Site settings → Environment variables**:
+
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Already set |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Already set |
+| `NEXT_PUBLIC_SUPABASE_SCHEMA` | Yes | `sperm_omics` |
+| `CRON_SECRET` | Yes | For `/api/cron/ingest` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Optional | Server-side ingest sync — get from Supabase Dashboard → Settings → API → **service_role** (secret) |
+| `NCBI_API_KEY` | Optional | Faster GEO/PubMed ingest |
+
+## Build settings (Next.js plugin)
+
+- **Build command:** `npm run build` (in `netlify.toml`)
+- **Publish directory:** leave **blank** in Netlify UI (do not set `.next`)
+- **Plugin:** `@netlify/plugin-nextjs`
+
+If builds fail with “publish directory” errors, open
+https://app.netlify.com/projects/sperm-omics-dashboard/settings/deploys
+and clear the Publish directory field.
+
+## Supabase data sync
 
 ```bash
-git init
-git add .
-git commit -m "SpermOmics live dashboard with Supabase"
-gh repo create sperm-omics-dashboard --public --source=. --push
+npm run ingest
+npm run sync:supabase   # needs SUPABASE_SERVICE_ROLE_KEY locally
+npm run db:verify
 ```
 
-## 3. Netlify
+## Weekly ingest
 
-1. [Netlify](https://app.netlify.com) → **Add new site** → **Import from GitHub**
-2. Select `sperm-omics-dashboard`
-3. Build settings (auto-detected from `netlify.toml`):
-   - Build: `npm run build`
-   - Plugin: `@netlify/plugin-nextjs`
-4. **Environment variables** (Site settings → Environment):
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - `SUPABASE_SERVICE_ROLE_KEY`
-   - `CRON_SECRET`
-   - `NCBI_API_KEY` (optional)
-
-5. Deploy → your site goes live at `https://your-site.netlify.app`
-
-## 4. Weekly data refresh
-
-GitHub Actions (`.github/workflows/ingest-schedule.yml`) runs ingest weekly and commits updated `data/`. Re-run `npm run sync:supabase` after ingest, or trigger ingest from `/ingest` page cron endpoint.
-
-## Performance
-
-| Layer | What it does |
-|-------|----------------|
-| **Supabase** | Indexed DB, paginated queries, stats RPC |
-| **API cache** | `revalidate=300` on `/api/*` |
-| **Netlify CDN** | Edge cache headers on API responses |
-| **Client pagination** | 50 datasets / 25 pubs per page |
+GitHub Actions (`.github/workflows/ingest-schedule.yml`) can refresh data weekly.
+After ingest, run `npm run sync:supabase` or call `/api/cron/ingest` in production
+(requires `CRON_SECRET` + `SUPABASE_SERVICE_ROLE_KEY` on Netlify).
