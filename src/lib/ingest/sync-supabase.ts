@@ -2,7 +2,8 @@ import { readFile } from "fs/promises";
 import path from "path";
 import type { IngestManifest } from "./ingest-types";
 import { loadEnvFiles } from "./load-env";
-import { getSupabaseService } from "@/lib/supabase/client";
+import { getSupabaseSchema, getSupabaseService } from "@/lib/supabase/client";
+import { TABLES } from "@/lib/supabase/config";
 import type { Dataset, Publication } from "@/lib/types";
 
 const BATCH = 100;
@@ -73,17 +74,17 @@ export async function syncLibraryToSupabase(manifest?: IngestManifest) {
   const raw = await readFile(file, "utf-8");
   const merged = JSON.parse(raw) as MergedFile;
 
-  console.log("\n[Supabase] Syncing library...");
+  console.log(`\n[Supabase] Syncing to schema: ${getSupabaseSchema()}`);
   console.log(`  ${merged.publications.length} publications, ${merged.datasets.length} datasets`);
 
   await upsertBatches(
-    "sperm_lib_publications",
+    TABLES.publications,
     merged.publications.map(pubRow),
     "external_id"
   );
 
   const { data: pubRows, error: pubErr } = await sb
-    .from("sperm_lib_publications")
+    .from(TABLES.publications)
     .select("id, external_id");
   if (pubErr) throw new Error(pubErr.message);
 
@@ -93,13 +94,13 @@ export async function syncLibraryToSupabase(manifest?: IngestManifest) {
   }
 
   await upsertBatches(
-    "sperm_lib_datasets",
+    TABLES.datasets,
     merged.datasets.map((d) => dsRow(d, pubUuidMap)),
     "external_id"
   );
 
   if (manifest) {
-    const { error } = await sb.from("sperm_lib_ingest_manifest").upsert({
+    const { error } = await sb.from(TABLES.ingestManifest).upsert({
       id: 1,
       last_run: manifest.lastRun,
       duration_ms: manifest.duration_ms,

@@ -1,5 +1,6 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/Badge";
+import { getSupabaseSchema } from "@/lib/supabase/client";
 import { getIngestManifest, getLibrary } from "@/lib/data/library";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +18,7 @@ export default async function IngestPage() {
           <h1 className="font-serif text-3xl font-bold">Data Ingestion</h1>
           <p className="mt-2 text-muted-foreground">
             Automated pipeline pulling datasets from GEO, PRIDE, SperMD, and PubMed.
-            Runs weekly via scheduled cron.
+            Data stored in isolated Supabase schema: <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{getSupabaseSchema()}</code>
           </p>
         </header>
 

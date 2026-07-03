@@ -1,5 +1,6 @@
 import type { Dataset, OmicsType, Publication, Species, Tissue } from "@/lib/types";
 import { getSupabaseAnon } from "./client";
+import { RPC, TABLES } from "./config";
 
 const CACHE_MS = 60_000;
 let statsCache: { data: unknown; at: number } | null = null;
@@ -78,7 +79,7 @@ export async function fetchStatsFromSupabase() {
     return statsCache.data;
   }
 
-  const { data, error } = await sb.rpc("sperm_lib_dashboard_stats");
+  const { data, error } = await sb.rpc(RPC.dashboardStats);
   if (error) {
     console.warn("Supabase stats RPC failed:", error.message);
     return null;
@@ -105,7 +106,7 @@ export async function fetchPublicationsFromSupabase(opts?: {
   const offset = opts?.offset ?? 0;
 
   let query = sb
-    .from("sperm_lib_publications")
+    .from(TABLES.publications)
     .select("*", { count: "exact" })
     .order("year", { ascending: false })
     .range(offset, offset + limit - 1);
@@ -142,7 +143,7 @@ export async function fetchDatasetsFromSupabase(opts?: {
   const offset = opts?.offset ?? 0;
 
   let query = sb
-    .from("sperm_lib_datasets")
+    .from(TABLES.datasets)
     .select("*", { count: "exact" })
     .order("accession", { ascending: true })
     .range(offset, offset + limit - 1);
@@ -171,7 +172,7 @@ export async function fetchManifestFromSupabase() {
   const sb = getSupabaseAnon();
   if (!sb) return null;
   const { data, error } = await sb
-    .from("sperm_lib_ingest_manifest")
+    .from(TABLES.ingestManifest)
     .select("*")
     .eq("id", 1)
     .maybeSingle();
@@ -193,12 +194,12 @@ export async function searchSupabase(query: string, limit = 20) {
 
   const [pubs, dss] = await Promise.all([
     sb
-      .from("sperm_lib_publications")
+      .from(TABLES.publications)
       .select("*")
       .or(`title.ilike.%${q}%,authors.ilike.%${q}%`)
       .limit(limit),
     sb
-      .from("sperm_lib_datasets")
+      .from(TABLES.datasets)
       .select("*")
       .or(`title.ilike.%${q}%,accession.ilike.%${q}%`)
       .limit(limit),
