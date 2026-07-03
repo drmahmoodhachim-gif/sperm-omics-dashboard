@@ -40,7 +40,7 @@ export async function fetchExpressionMatrix(
 
   switch (kind) {
     case "geo":
-      data = await fetchGeoSeriesMatrix(acc);
+      data = await fetchGeoSeriesMatrix(acc, opts?.fileUrl);
       break;
     case "arrayexpress":
       data = await fetchArrayExpressMatrix(acc, opts?.fileUrl);

@@ -24,28 +24,89 @@ export function parseSeriesMatrixGz(buffer: Buffer, accession: string): ParsedSe
   return parseSeriesMatrixText(text, accession);
 }
 
-export function parseSeriesMatrixText(text: string, accession: string): ParsedSeriesMatrix {
-  const lines = text.split(/\r?\n/);
+/** Metadata + optional expression table from series matrix text. */
+export function parseSeriesMatrixMetadata(text: string, accession: string) {
+  const samples = extractSamples(text);
+  const hasExpression = seriesMatrixHasDataRows(text);
+  return { samples, hasExpression, accession: accession.toUpperCase() };
+}
+
+function seriesMatrixHasDataRows(text: string): boolean {
+  let inTable = false;
+  let rows = 0;
+  for (const line of text.split(/\r?\n/)) {
+    if (/series_matrix_table_begin/i.test(line)) {
+      inTable = true;
+      continue;
+    }
+    if (/series_matrix_table_end/i.test(line)) {
+      inTable = false;
+      continue;
+    }
+    if (inTable && line.trim()) rows++;
+  }
+  return rows >= 2;
+}
+
+function extractSamples(text: string): MatrixSample[] {
+  const { sampleTitles, sampleChars, gsmHeader } = parseSampleMetadata(text);
+  const n = Math.max(sampleTitles.length, gsmHeader.length);
+  const samples: MatrixSample[] = [];
+  for (let i = 0; i < n && i < MAX_SAMPLES; i++) {
+    samples.push({
+      id: gsmHeader[i] ?? `Sample_${i + 1}`,
+      title: sampleTitles[i] ?? gsmHeader[i] ?? `Sample_${i + 1}`,
+      characteristics: sampleChars[i] ?? [],
+    });
+  }
+  return samples;
+}
+
+function parseSampleMetadata(text: string) {
   const sampleTitles: string[] = [];
   const sampleChars: string[][] = [];
+  let gsmHeader: string[] = [];
+
+  for (const line of text.split(/\r?\n/)) {
+    if (line.startsWith("!Sample_title")) {
+      sampleTitles.push(...line.split("\t").slice(1).map(unquote));
+    } else if (line.startsWith("!Sample_characteristics_ch1")) {
+      line
+        .split("\t")
+        .slice(1)
+        .map(unquote)
+        .forEach((val, i) => {
+          if (!val) return;
+          if (!sampleChars[i]) sampleChars[i] = [];
+          sampleChars[i].push(val);
+        });
+    } else if (/series_matrix_table_begin/i.test(line)) {
+      const lines = text.split(/\r?\n/);
+      const idx = lines.indexOf(line);
+      if (idx >= 0 && lines[idx + 1]) {
+        gsmHeader = splitTsvLine(lines[idx + 1])
+          .slice(1)
+          .map(unquote)
+          .filter(Boolean);
+      }
+      break;
+    }
+  }
+
+  return { sampleTitles, sampleChars, gsmHeader };
+}
+
+export function parseSeriesMatrixText(text: string, accession: string): ParsedSeriesMatrix {
+  const lines = text.split(/\r?\n/);
+  const { sampleTitles, sampleChars } = parseSampleMetadata(text);
   let inTable = false;
   const tableRows: string[][] = [];
 
   for (const line of lines) {
-    if (line.startsWith("!Sample_title")) {
-      sampleTitles.push(unquote(line.split("\t").slice(1).join("\t")));
-    } else if (line.startsWith("!Sample_characteristics_ch1")) {
-      sampleChars.push(
-        line
-          .split("\t")
-          .slice(1)
-          .map((c) => unquote(c))
-          .filter(Boolean)
-      );
-    } else if (line.includes("series_matrix_table_begin")) {
+    if (/series_matrix_table_begin/i.test(line)) {
       inTable = true;
       continue;
-    } else if (line.includes("series_matrix_table_end")) {
+    } else if (/series_matrix_table_end/i.test(line)) {
       inTable = false;
       continue;
     } else if (inTable && line.trim()) {

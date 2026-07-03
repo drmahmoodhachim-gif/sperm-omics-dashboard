@@ -18,14 +18,16 @@ export function parseQuantTableText(
   let header = rows[0];
   let dataStart = 1;
 
-  const firstCell = header[0]?.toLowerCase() ?? "";
+  const firstCell = header[0]?.toLowerCase().replace(/^"|"$/g, "") ?? "";
+  const secondCell = cleanCell(header[1] ?? "");
   const looksLikeHeader =
     opts?.hasHeader !== false &&
     (firstCell.includes("gene") ||
       firstCell.includes("protein") ||
       firstCell.includes("id") ||
       firstCell.includes("feature") ||
-      isNaN(Number(header[1]?.replace(/"/g, ""))));
+      firstCell === "" ||
+      (secondCell !== "" && isNaN(Number(secondCell))));
 
   if (!looksLikeHeader) {
     header = rows[0].map((_, i) => (i === 0 ? "feature" : `Sample_${i}`));

@@ -120,9 +120,11 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
       if (!res.ok) throw new Error(data.error ?? "Failed to list files");
       setFiles(data.files ?? []);
       setMeta({ source: data.source, kind: data.kind });
-      const first = (data.files as RawFile[]).find(
-        (f) => f.analyzable || f.type === "expression_matrix" || f.type === "processed"
-      );
+      const first =
+        (data.files as RawFile[]).find((f) => f.analyzable) ??
+        (data.files as RawFile[]).find(
+          (f) => f.type === "processed" || f.type === "expression_matrix"
+        );
       if (first) setSelectedFileUrl(first.url);
       setStep(1);
     } catch (e) {
