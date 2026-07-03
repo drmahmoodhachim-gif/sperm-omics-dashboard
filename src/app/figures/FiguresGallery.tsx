@@ -3,28 +3,23 @@
 import { FigureRenderer } from "@/components/figures/FigureRenderer";
 import { FigureExport } from "@/components/figures/FigureExport";
 import { Badge } from "@/components/ui/Badge";
-import type { Figure, Method, Publication, Dataset } from "@/lib/types";
+import {
+  figures,
+  getDatasetById,
+  getMethodById,
+  getPublicationById,
+} from "@/lib/data/seed";
 import { FIGURE_LABELS } from "@/lib/utils";
 
-interface FiguresGalleryProps {
-  figures: Figure[];
-  getPublication: (id?: string) => Publication | undefined;
-  getDataset: (id?: string) => Dataset | undefined;
-  getMethod: (id?: string) => Method | undefined;
-}
-
-export function FiguresGallery({
-  figures,
-  getPublication,
-  getDataset,
-  getMethod,
-}: FiguresGalleryProps) {
+export function FiguresGallery() {
   return (
     <div className="space-y-8">
       {figures.map((fig) => {
-        const pub = getPublication(fig.publicationId);
-        const dataset = getDataset(fig.datasetId);
-        const method = getMethod(fig.methodId);
+        const pub = fig.publicationId
+          ? getPublicationById(fig.publicationId)
+          : undefined;
+        const dataset = fig.datasetId ? getDatasetById(fig.datasetId) : undefined;
+        const method = fig.methodId ? getMethodById(fig.methodId) : undefined;
 
         return (
           <article
@@ -60,9 +55,7 @@ export function FiguresGallery({
                 {method && (
                   <span>
                     Method:{" "}
-                    <span className="font-medium text-foreground">
-                      {method.name}
-                    </span>
+                    <span className="font-medium text-foreground">{method.name}</span>
                   </span>
                 )}
                 {pub && (

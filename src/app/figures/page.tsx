@@ -1,11 +1,5 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { FiguresGallery } from "./FiguresGallery";
-import {
-  figures,
-  getMethodById,
-  getPublicationById,
-  getDatasetById,
-} from "@/lib/data/seed";
 
 export default function FiguresPage() {
   return (
@@ -18,12 +12,7 @@ export default function FiguresPage() {
             manuscripts.
           </p>
         </header>
-        <FiguresGallery
-          figures={figures}
-          getPublication={(id) => (id ? getPublicationById(id) : undefined)}
-          getDataset={(id) => (id ? getDatasetById(id) : undefined)}
-          getMethod={(id) => (id ? getMethodById(id) : undefined)}
-        />
+        <FiguresGallery />
       </div>
     </DashboardLayout>
   );
