@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
 import type { Dataset } from "@/lib/types";
 import { OMICS_LABELS, TISSUE_LABELS } from "@/lib/utils";
+import { ANALYZABLE_ACCESSIONS } from "@/lib/analysis/catalog";
 
 export function DatasetsTable({ datasets }: { datasets: Dataset[] }) {
   if (datasets.length === 0) {
@@ -23,6 +24,7 @@ export function DatasetsTable({ datasets }: { datasets: Dataset[] }) {
             <th>Tissue</th>
             <th>Species</th>
             <th>Repository</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -56,6 +58,16 @@ export function DatasetsTable({ datasets }: { datasets: Dataset[] }) {
               <td>{TISSUE_LABELS[d.tissue] ?? d.tissue}</td>
               <td className="capitalize">{d.species}</td>
               <td>{d.repository}</td>
+              <td>
+                {ANALYZABLE_ACCESSIONS.includes(d.accession) && (
+                  <Link
+                    href={`/analysis?study=${encodeURIComponent(d.accession)}`}
+                    className="whitespace-nowrap rounded-lg bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20"
+                  >
+                    Analyze →
+                  </Link>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>

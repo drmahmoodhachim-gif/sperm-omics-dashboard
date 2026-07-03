@@ -6,6 +6,7 @@ import {
   FlaskConical,
   Home,
   Image,
+  LineChart,
   RefreshCw,
   Search,
 } from "lucide-react";
@@ -15,6 +16,7 @@ const navItems = [
   { href: "/", label: "Overview", icon: Home },
   { href: "/publications", label: "Publications", icon: BookOpen },
   { href: "/datasets", label: "Datasets", icon: Database },
+  { href: "/analysis", label: "Analysis Workspace", icon: LineChart },
   { href: "/figures", label: "Figures & Tables", icon: Image },
   { href: "/methods", label: "Methods & Materials", icon: FlaskConical },
   { href: "/ingest", label: "Data Ingestion", icon: RefreshCw },
