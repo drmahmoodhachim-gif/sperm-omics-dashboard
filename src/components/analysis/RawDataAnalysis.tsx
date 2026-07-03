@@ -332,6 +332,8 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
           <h4 className="font-semibold">2 · Load expression / quantification matrix</h4>
           <p className="mt-1 text-xs text-muted-foreground">
             Parses sample × feature table directly from the source file (not published summary stats).
+            GEO RNA-seq studies auto-load supplementary CSV/FPKM files; large microarray matrices are
+            streamed. Studies with only RAW.tar or Excel need local download.
           </p>
           {selectedFileUrl && (
             <p className="mt-2 truncate font-mono text-xs text-primary">

@@ -21,6 +21,19 @@ export function geoMinimlUrl(accession: string): string | null {
   return `https://ftp.ncbi.nlm.nih.gov/geo/series/${dir}/miniml/${gse}_family.xml.tgz`;
 }
 
+export function geoSupplDirUrl(accession: string): string | null {
+  const dir = geoFtpSeriesDir(accession);
+  if (!dir) return null;
+  const gse = accession.toUpperCase();
+  return `https://ftp.ncbi.nlm.nih.gov/geo/series/${dir}/${gse}/suppl/`;
+}
+
+export function geoSupplFileUrl(accession: string, filename: string): string | null {
+  const dir = geoFtpSeriesDir(accession);
+  if (!dir) return null;
+  return `https://ftp.ncbi.nlm.nih.gov/geo/series/${dir}/${accession.toUpperCase()}/suppl/${filename}`;
+}
+
 export function isGeoAccession(accession: string): boolean {
   return /^GSE\d+$/i.test(accession.trim());
 }

@@ -4,11 +4,22 @@ import {
   isGeoAccession,
 } from "@/lib/raw-data/geo-path";
 import {
+  discoverGeoQuantFiles,
   fetchGeoSupplementaryMatrix,
+  listGeoSupplDirectory,
   rankSupplementaryFiles,
   seriesMatrixHasExpressionTable,
-  toHttps,
 } from "@/lib/raw-data/geo-supplementary";
+import { toHttps } from "@/lib/raw-data/geo-utils";
+import {
+  aggregateSampleCountFiles,
+  extractSampleSupplements,
+} from "@/lib/raw-data/geo-sample-counts";
+import {
+  headContentLength,
+  isLargeMatrix,
+  streamGeoSeriesMatrix,
+} from "@/lib/raw-data/geo-matrix-stream";
 import {
   parseSeriesMatrixGz,
   parseSeriesMatrixMetadata,
@@ -36,22 +47,41 @@ export async function listRawFiles(accession: string): Promise<RawFileLink[]> {
     const minimlUrl = geoMinimlUrl(acc);
     let suppFiles: ReturnType<typeof rankSupplementaryFiles> = [];
 
+    let matrixText = "";
+
     if (matrixUrl) {
       try {
-        const res = await fetch(matrixUrl, { signal: AbortSignal.timeout(30_000) });
-        if (res.ok) {
-          const text = gunzipSync(Buffer.from(await res.arrayBuffer())).toString("utf-8");
-          suppFiles = rankSupplementaryFiles(text, acc);
-          const hasTable = seriesMatrixHasExpressionTable(text);
+        const contentLength = await headContentLength(matrixUrl);
+        if (isLargeMatrix(contentLength)) {
+          const streamed = await streamGeoSeriesMatrix(matrixUrl, acc);
+          matrixText = streamed.metaText;
+          suppFiles = rankSupplementaryFiles(matrixText, acc);
+          const hasTable = streamed.hasTable;
           files.push({
             name: `${acc}_series_matrix.txt.gz`,
             url: matrixUrl,
             type: "expression_matrix",
             description: hasTable
-              ? "GEO Series Matrix — sample × gene expression (ready for DE analysis)"
+              ? "GEO Series Matrix (large — streamed for DE analysis)"
               : "GEO Series Matrix — metadata only; use supplementary quant file below",
             analyzable: hasTable,
           });
+        } else {
+          const res = await fetch(matrixUrl, { signal: AbortSignal.timeout(30_000) });
+          if (res.ok) {
+            matrixText = gunzipSync(Buffer.from(await res.arrayBuffer())).toString("utf-8");
+            suppFiles = rankSupplementaryFiles(matrixText, acc);
+            const hasTable = seriesMatrixHasExpressionTable(matrixText);
+            files.push({
+              name: `${acc}_series_matrix.txt.gz`,
+              url: matrixUrl,
+              type: "expression_matrix",
+              description: hasTable
+                ? "GEO Series Matrix — sample × gene expression (ready for DE analysis)"
+                : "GEO Series Matrix — metadata only; use supplementary quant file below",
+              analyzable: hasTable,
+            });
+          }
         }
       } catch {
         files.push({
@@ -63,7 +93,23 @@ export async function listRawFiles(accession: string): Promise<RawFileLink[]> {
       }
     }
 
-    for (const s of suppFiles.slice(0, 8)) {
+    const seen = new Set(suppFiles.map((f) => f.url));
+    for (const f of await listGeoSupplDirectory(acc)) {
+      if (!seen.has(f.url)) {
+        suppFiles.push(f);
+        seen.add(f.url);
+      }
+    }
+    if (matrixText) {
+      for (const f of await discoverGeoQuantFiles(matrixText, acc)) {
+        if (!seen.has(f.url) && f.source !== "sample") {
+          suppFiles.push(f);
+          seen.add(f.url);
+        }
+      }
+    }
+
+    for (const s of suppFiles.sort((a, b) => b.score - a.score).slice(0, 12)) {
       files.push({
         name: s.name,
         url: s.url,
@@ -179,10 +225,16 @@ export async function fetchGeoSeriesMatrix(
 
     if (matrixUrl) {
       try {
-        const metaRes = await fetch(matrixUrl, { signal: AbortSignal.timeout(30_000) });
-        if (metaRes.ok) {
-          const text = gunzipSync(Buffer.from(await metaRes.arrayBuffer())).toString("utf-8");
-          metaSamples = parseSeriesMatrixMetadata(text, acc).samples;
+        const contentLength = await headContentLength(matrixUrl);
+        if (isLargeMatrix(contentLength)) {
+          const streamed = await streamGeoSeriesMatrix(matrixUrl, acc);
+          metaSamples = parseSeriesMatrixMetadata(streamed.metaText, acc).samples;
+        } else {
+          const metaRes = await fetch(matrixUrl, { signal: AbortSignal.timeout(30_000) });
+          if (metaRes.ok) {
+            const t = gunzipSync(Buffer.from(await metaRes.arrayBuffer())).toString("utf-8");
+            metaSamples = parseSeriesMatrixMetadata(t, acc).samples;
+          }
         }
       } catch {
         // optional metadata
@@ -197,34 +249,75 @@ export async function fetchGeoSeriesMatrix(
   const url = geoSeriesMatrixUrl(acc);
   if (!url) throw new Error("Cannot resolve GEO FTP path");
 
-  const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
-  if (!res.ok) {
+  const contentLength = await headContentLength(url);
+  let text = "";
+  let meta = parseSeriesMatrixMetadata("", acc);
+
+  if (isLargeMatrix(contentLength)) {
+    const streamed = await streamGeoSeriesMatrix(url, acc);
+    text = streamed.metaText;
+    meta = parseSeriesMatrixMetadata(text, acc);
+    if (streamed.matrix) {
+      matrixCache.set(cacheKey, { at: Date.now(), data: streamed.matrix });
+      return streamed.matrix;
+    }
+  } else {
+    const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+    if (!res.ok) {
+      throw new Error(
+        `GEO matrix download failed (${res.status}). Try the NCBI GEO page for supplementary files.`
+      );
+    }
+
+    const buf = Buffer.from(await res.arrayBuffer());
+    text = gunzipSync(buf).toString("utf-8");
+    meta = parseSeriesMatrixMetadata(text, acc);
+
+    if (meta.hasExpression) {
+      const parsed = parseSeriesMatrixGz(buf, acc);
+      matrixCache.set(cacheKey, { at: Date.now(), data: parsed });
+      return parsed;
+    }
+  }
+
+  const candidates = await discoverGeoQuantFiles(text, acc);
+  const errors: string[] = [];
+
+  for (const file of candidates.slice(0, 12)) {
+    if (file.source === "sample") continue;
+    try {
+      const parsed = await fetchGeoSupplementaryMatrix(file.url, acc, meta.samples);
+      matrixCache.set(cacheKey, { at: Date.now(), data: parsed });
+      return parsed;
+    } catch (err) {
+      errors.push(`${file.name}: ${err instanceof Error ? err.message : "parse failed"}`);
+    }
+  }
+
+  const sampleFiles = extractSampleSupplements(text);
+  if (sampleFiles.length >= 2) {
+    try {
+      const parsed = await aggregateSampleCountFiles(sampleFiles, acc, meta.samples);
+      matrixCache.set(cacheKey, { at: Date.now(), data: parsed });
+      return parsed;
+    } catch (err) {
+      errors.push(
+        `Per-sample merge: ${err instanceof Error ? err.message : "failed"}`
+      );
+    }
+  }
+
+  if (candidates.length === 0 && !text) {
     throw new Error(
-      `GEO matrix download failed (${res.status}). Try the NCBI GEO page for supplementary files.`
+      "Could not read GEO series matrix or supplementary files. The study may only provide raw FASTQ/BAM — use NCBI GEO download or local DESeq2."
     );
   }
 
-  const buf = Buffer.from(await res.arrayBuffer());
-  const text = gunzipSync(buf).toString("utf-8");
-  const meta = parseSeriesMatrixMetadata(text, acc);
-
-  if (meta.hasExpression) {
-    const parsed = parseSeriesMatrixGz(buf, acc);
-    matrixCache.set(cacheKey, { at: Date.now(), data: parsed });
-    return parsed;
-  }
-
-  const suppFiles = rankSupplementaryFiles(text, acc);
-  if (suppFiles.length === 0) {
-    throw new Error(
-      "This GEO study has no expression table in the series matrix and no parseable supplementary quant file. Download raw files from NCBI GEO."
-    );
-  }
-
-  const best = suppFiles[0];
-  const parsed = await fetchGeoSupplementaryMatrix(best.url, acc, meta.samples);
-  matrixCache.set(cacheKey, { at: Date.now(), data: parsed });
-  return parsed;
+  throw new Error(
+    `No parseable quantification table found. Tried ${candidates.length} file(s). ` +
+      (errors[0] ? `Last error: ${errors[0]}. ` : "") +
+      "Some studies only provide RAW.tar, Excel, or scRNA-seq objects — download from NCBI GEO for local analysis."
+  );
 }
 
 export function matrixPreview(matrix: ParsedSeriesMatrix) {

@@ -1,55 +1,136 @@
-import { parseQuantBuffer } from "./parse-quant-table";
-import type { ParsedSeriesMatrix, MatrixSample } from "./parse-series-matrix";
+import { geoSupplDirUrl, geoSupplFileUrl } from "./geo-path";
+import { extractSampleSupplements } from "./geo-sample-counts";
+import { toHttps, unquoteGeoCell as unquote } from "./geo-utils";
 
 export interface GeoSupplementaryFile {
   name: string;
   url: string;
   score: number;
   description: string;
+  source?: "series" | "ftp" | "sample";
 }
 
 const SUPP_LINE = /^!Series_supplementary_file\t/i;
+const MIN_SCORE = 8;
 
-/** Rank GEO series-level supplementary files for inline DE analysis. */
-export function rankSupplementaryFiles(text: string, _accession: string): GeoSupplementaryFile[] {
+export function scoreQuantFilename(name: string): number {
+  const lower = name.toLowerCase();
+  let score = 0;
+
+  if (/\.(tar|tar\.gz)$/.test(lower) && !/\.(txt|tsv|csv)\.gz$/.test(lower)) score -= 50;
+  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) score += 4;
+  if (/\.(csv|tsv|txt)(\.gz)?$/.test(lower)) score += 18;
+  if (lower.includes("log2") && lower.includes("norm")) score += 30;
+  if (lower.includes("fpkm_tracking")) score += 22;
+  if (lower.includes("fpkm") || lower.includes("tpm") || lower.includes("rpkm")) score += 14;
+  if (lower.includes("exprs") || lower.includes("expression")) score += 12;
+  if (lower.includes("count") && !lower.includes("account")) score += 10;
+  if (lower.includes("normalized") || lower.includes("norm_")) score += 20;
+  if (lower.includes("matrix") || lower.includes("signal")) score += 12;
+  if (lower.includes("rma") || lower.includes("gcrma")) score += 14;
+  if (/counts\.txt(\.gz)?$/.test(lower) || lower.endsWith(".counts.txt.gz")) score += 16;
+  if (/\.(fastq|bam|sam|bed\.gz|bw|bigwig)/.test(lower)) score -= 40;
+  if (/exprs|fpkm|counts|signal|rma|tpm|normalized/.test(lower) && lower.endsWith(".gz")) score += 6;
+
+  return score;
+}
+
+function urlsFromSeriesLines(text: string): string[] {
   const urls: string[] = [];
-
   for (const line of text.split(/\r?\n/)) {
     if (!SUPP_LINE.test(line)) continue;
-    const cells = line.split("\t").slice(1);
-    for (const cell of cells) {
+    for (const cell of line.split("\t").slice(1)) {
       const url = unquote(cell);
       if (url.startsWith("ftp://") || url.startsWith("http")) urls.push(toHttps(url));
     }
   }
+  return urls;
+}
 
-  return urls
-    .map((url) => {
-      const name = url.split("/").pop() ?? url;
-      const lower = name.toLowerCase();
-      let score = 0;
-
-      if (lower.endsWith(".tar") || lower.endsWith(".tar.gz") || lower.includes("_raw")) score -= 50;
-      if (lower.endsWith(".csv.gz") || lower.endsWith(".csv")) score += 20;
-      if (lower.endsWith(".tsv.gz") || lower.endsWith(".tsv") || lower.endsWith(".txt.gz"))
-        score += 18;
-      if (lower.includes("log2") && lower.includes("norm")) score += 30;
-      if (lower.includes("count") && lower.includes("collapse")) score += 25;
-      if (lower.includes("normalized") || lower.includes("norm_count")) score += 22;
-      if (lower.includes("expression") || lower.includes("matrix")) score += 15;
-      if (lower.includes("fpkm") || lower.includes("tpm") || lower.includes("rpkm")) score += 12;
-      if (lower.includes("count")) score += 10;
-      if (lower.includes(".fastq") || lower.includes(".bam") || lower.includes(".sam")) score -= 40;
-
-      const description =
-        score >= 25
-          ? "GEO supplementary quantification table — ready for DE analysis"
-          : "GEO supplementary archive (may require local extraction)";
-
-      return { name, url, score, description };
-    })
-    .filter((f) => f.score > 0)
+export function rankSupplementaryFiles(text: string, accession: string): GeoSupplementaryFile[] {
+  return urlsFromSeriesLines(text)
+    .map((url) => fileEntry(url, "series"))
+    .filter((f) => f.score >= MIN_SCORE)
     .sort((a, b) => b.score - a.score);
+}
+
+function fileEntry(url: string, source: GeoSupplementaryFile["source"]): GeoSupplementaryFile {
+  const name = url.split("/").pop() ?? url;
+  const score = scoreQuantFilename(name);
+  return {
+    name,
+    url,
+    score,
+    source,
+    description:
+      score >= 20
+        ? "GEO quantification table — ready for DE analysis"
+        : score >= MIN_SCORE
+          ? "GEO supplementary table — may work for DE analysis"
+          : "GEO supplementary archive",
+  };
+}
+
+export async function listGeoSupplDirectory(accession: string): Promise<GeoSupplementaryFile[]> {
+  const dirUrl = geoSupplDirUrl(accession);
+  if (!dirUrl) return [];
+
+  try {
+    const res = await fetch(dirUrl, { signal: AbortSignal.timeout(20_000) });
+    if (!res.ok) return [];
+    const html = await res.text();
+    const acc = accession.toUpperCase();
+    const names = new Set<string>();
+
+    for (const m of html.matchAll(/href="([^"?]+\.(?:txt|tsv|csv|gz))"/gi)) {
+      const name = m[1].split("/").pop() ?? m[1];
+      if (!name.startsWith(acc) && !name.includes("fpkm") && !name.includes("count")) continue;
+      names.add(name);
+    }
+
+    return [...names]
+      .map((name) => {
+        const url = geoSupplFileUrl(acc, name);
+        return url ? fileEntry(url, "ftp") : null;
+      })
+      .filter((f): f is GeoSupplementaryFile => f !== null && f.score >= MIN_SCORE)
+      .sort((a, b) => b.score - a.score);
+  } catch {
+    return [];
+  }
+}
+
+/** All candidate quant files: series supp, FTP listing, per-sample count files. */
+export async function discoverGeoQuantFiles(
+  text: string,
+  accession: string
+): Promise<GeoSupplementaryFile[]> {
+  const seen = new Set<string>();
+  const out: GeoSupplementaryFile[] = [];
+
+  function add(f: GeoSupplementaryFile) {
+    if (seen.has(f.url)) return;
+    seen.add(f.url);
+    out.push(f);
+  }
+
+  for (const f of rankSupplementaryFiles(text, accession)) add(f);
+  for (const f of await listGeoSupplDirectory(accession)) add(f);
+
+  for (const s of extractSampleSupplements(text)) {
+    const score = scoreQuantFilename(s.name);
+    if (score >= MIN_SCORE) {
+      add({
+        name: s.name,
+        url: s.url,
+        score: score - 2,
+        source: "sample",
+        description: `Per-sample quant file (${s.sampleId}) — merged with others when needed`,
+      });
+    }
+  }
+
+  return out.sort((a, b) => b.score - a.score);
 }
 
 export function seriesMatrixHasExpressionTable(text: string): boolean {
@@ -72,8 +153,9 @@ export function seriesMatrixHasExpressionTable(text: string): boolean {
 export async function fetchGeoSupplementaryMatrix(
   url: string,
   accession: string,
-  metaSamples?: MatrixSample[]
-): Promise<ParsedSeriesMatrix> {
+  metaSamples?: import("./parse-series-matrix").MatrixSample[]
+): Promise<import("./parse-series-matrix").ParsedSeriesMatrix> {
+  const { parseQuantBuffer } = await import("./parse-quant-table");
   const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
   if (!res.ok) {
     throw new Error(`GEO supplementary download failed (${res.status}) for ${url.split("/").pop()}`);
@@ -98,10 +180,4 @@ export async function fetchGeoSupplementaryMatrix(
   return parsed;
 }
 
-export function toHttps(url: string): string {
-  return url.replace(/^ftp:\/\//i, "https://");
-}
-
-function unquote(s: string): string {
-  return s.replace(/^"|"$/g, "").trim();
-}
+export { toHttps } from "./geo-utils";
