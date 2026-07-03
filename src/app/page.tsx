@@ -8,6 +8,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { DeveloperCredit } from "@/components/layout/DeveloperCredit";
 import { StatCard } from "@/components/ui/StatCard";
 import { Badge } from "@/components/ui/Badge";
 import { OmicsBarChart } from "@/components/charts/PublicationCharts";
@@ -163,6 +164,8 @@ export default async function HomePage() {
             ))}
           </div>
         </section>
+
+        <DeveloperCredit />
       </div>
     </DashboardLayout>
   );

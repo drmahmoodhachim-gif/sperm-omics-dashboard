@@ -11,6 +11,7 @@ import {
   Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DeveloperCredit } from "@/components/layout/DeveloperCredit";
 
 const navItems = [
   { href: "/", label: "Overview", icon: Home },
@@ -58,9 +59,7 @@ export function Sidebar({ activePath }: { activePath: string }) {
         })}
       </nav>
       <div className="border-t border-border px-6 py-4">
-        <p className="text-xs text-muted-foreground">
-          Curated public omics &amp; semen data from GEO, PRIDE, SperMD, and WHO references.
-        </p>
+        <DeveloperCredit compact />
       </div>
     </aside>
   );
