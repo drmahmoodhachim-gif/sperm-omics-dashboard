@@ -7,6 +7,7 @@ import {
   PublicationTable,
   VolcanoPlot,
 } from "@/components/charts/PublicationCharts";
+import { HeatmapChart } from "@/components/charts/HeatmapChart";
 import type { Figure } from "@/lib/types";
 
 export function FigureRenderer({ figure }: { figure: Figure }) {
@@ -15,6 +16,17 @@ export function FigureRenderer({ figure }: { figure: Figure }) {
   switch (figure.figureType) {
     case "volcano":
       return <VolcanoPlot data={(data.points as Parameters<typeof VolcanoPlot>[0]["data"]) ?? []} />;
+    case "heatmap":
+      return (
+        <HeatmapChart
+          genes={(data.genes as string[]) ?? []}
+          samples={(data.samples as string[]) ?? []}
+          cells={(data.cells as Parameters<typeof HeatmapChart>[0]["cells"]) ?? []}
+          min={(data.min as number) ?? -2}
+          max={(data.max as number) ?? 2}
+          sampleLabels={data.sampleLabels as Record<string, string> | undefined}
+        />
+      );
     case "bar":
       return <OmicsBarChart data={(data.categories as Parameters<typeof OmicsBarChart>[0]["data"]) ?? []} />;
     case "pathway":

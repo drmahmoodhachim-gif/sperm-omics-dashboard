@@ -1,17 +1,19 @@
 import { NextResponse } from "next/server";
-import { fetchGeoSeriesMatrix, matrixPreview } from "@/lib/raw-data/geo-fetch";
+import { fetchExpressionMatrix, matrixPreview } from "@/lib/raw-data/fetch-matrix";
 
 export const maxDuration = 60;
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ accession: string }> }
 ) {
   const { accession } = await params;
   const acc = decodeURIComponent(accession).toUpperCase();
+  const { searchParams } = new URL(request.url);
+  const fileUrl = searchParams.get("fileUrl") ?? undefined;
 
   try {
-    const matrix = await fetchGeoSeriesMatrix(acc);
+    const matrix = await fetchExpressionMatrix(acc, { fileUrl });
     return NextResponse.json(matrixPreview(matrix));
   } catch (err) {
     return NextResponse.json(

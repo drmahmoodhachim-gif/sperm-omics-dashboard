@@ -12,6 +12,8 @@ import { suggestFigureTypes } from "@/lib/analysis/catalog";
 import type { Dataset, FigureType, Measurement } from "@/lib/types";
 import { FIGURE_LABELS, OMICS_LABELS, TISSUE_LABELS, cn } from "@/lib/utils";
 
+const RAW_ACCESSION = /^(GSE\d+|E-MTAB-\d+|PXD\d+)$/i;
+
 interface StudyWithCount extends Dataset {
   variableCount: number;
 }
@@ -39,11 +41,13 @@ export function AnalysisWorkspace({
   const [figureType, setFigureType] = useState<FigureType>("volcano");
   const [loadingStudy, setLoadingStudy] = useState(false);
   const mode = searchParams.get("mode") === "raw" ? "raw" : "published";
-  const [geoInput, setGeoInput] = useState(
-    () => initialStudyId?.match(/^GSE/i) ? initialStudyId.toUpperCase() : "GSE281732"
-  );
+  const [accessionInput, setAccessionInput] = useState(() => {
+    const id = initialStudyId?.toUpperCase() ?? "";
+    if (RAW_ACCESSION.test(id)) return id;
+    return "GSE281732";
+  });
   const [rawStudy, setRawStudy] = useState<Dataset | null>(null);
-  const [loadingGeo, setLoadingGeo] = useState(false);
+  const [loadingRaw, setLoadingRaw] = useState(false);
 
   const filteredStudies = useMemo(() => {
     const q = studyQuery.trim().toLowerCase();
@@ -153,12 +157,22 @@ export function AnalysisWorkspace({
     });
   }
 
-  const loadGeoStudy = useCallback(async (accession: string) => {
+  function rawRepository(acc: string): Dataset["repository"] {
+    if (/^GSE/i.test(acc)) return "GEO";
+    if (/^E-MTAB/i.test(acc)) return "ArrayExpress";
+    if (/^PXD/i.test(acc)) return "PRIDE";
+    return "GEO";
+  }
+
+  function rawOmics(acc: string): Dataset["omicsType"] {
+    if (/^PXD/i.test(acc)) return "proteomics";
+    return "transcriptomics";
+  }
+
+  const loadRawStudy = useCallback(async (accession: string) => {
     const acc = accession.trim().toUpperCase();
-    if (!/^GSE\d+$/.test(acc)) {
-      return;
-    }
-    setLoadingGeo(true);
+    if (!RAW_ACCESSION.test(acc)) return;
+    setLoadingRaw(true);
     try {
       const res = await fetch(`/api/datasets/${encodeURIComponent(acc)}`);
       if (res.ok) {
@@ -168,12 +182,17 @@ export function AnalysisWorkspace({
         setRawStudy({
           id: acc,
           accession: acc,
-          title: `${acc} — GEO Series`,
-          repository: "GEO",
-          omicsType: "transcriptomics",
+          title: `${acc} — ${rawRepository(acc)} study`,
+          repository: rawRepository(acc),
+          omicsType: rawOmics(acc),
           species: "human",
           tissue: "spermatozoa",
-          url: `https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=${acc}`,
+          url:
+            /^GSE/i.test(acc)
+              ? `https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=${acc}`
+              : /^PXD/i.test(acc)
+                ? `https://www.ebi.ac.uk/pride/archive/projects/${acc}`
+                : `https://www.ebi.ac.uk/biostudies/studies/${acc}`,
         });
       }
       startTransition(() => {
@@ -183,17 +202,17 @@ export function AnalysisWorkspace({
         router.replace(`/analysis?${params.toString()}`);
       });
     } finally {
-      setLoadingGeo(false);
+      setLoadingRaw(false);
     }
   }, [router, searchParams]);
 
   const studyParam = searchParams.get("study");
 
   useEffect(() => {
-    if (mode === "raw" && studyParam && /^GSE\d+$/i.test(studyParam)) {
-      loadGeoStudy(studyParam);
+    if (mode === "raw" && studyParam && RAW_ACCESSION.test(studyParam)) {
+      loadRawStudy(studyParam);
     }
-  }, [mode, studyParam, loadGeoStudy]);
+  }, [mode, studyParam, loadRawStudy]);
 
   function selectSignificant() {
     const sig = measurements.filter((m) => {
@@ -204,7 +223,11 @@ export function AnalysisWorkspace({
     setSelectedVars(new Set(sig.map((m) => m.featureName)));
   }
 
-  const rawTarget = rawStudy ?? (selectedStudy?.accession.match(/^GSE/i) ? selectedStudy : null);
+  const rawTarget =
+    rawStudy ??
+    (selectedStudy?.accession && RAW_ACCESSION.test(selectedStudy.accession)
+      ? selectedStudy
+      : null);
 
   return (
     <div className="grid gap-6 xl:grid-cols-[320px_1fr]">
@@ -297,26 +320,41 @@ export function AnalysisWorkspace({
         {mode === "raw" ? (
           <div className="space-y-6">
             <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
-              <h3 className="text-sm font-semibold">GEO Series accession</h3>
+              <h3 className="text-sm font-semibold">Repository accession</h3>
               <p className="mt-1 text-xs text-muted-foreground">
-                Enter any GSE accession from the library (e.g. GSE281732) to download the series
-                matrix and run your own differential expression.
+                Connect to raw source files from GEO (GSE), ArrayExpress (E-MTAB), or PRIDE (PXD).
+                Download matrices and run your own differential expression in-browser.
               </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {["GSE281732", "E-MTAB-6419", "PXD040292"].map((example) => (
+                  <button
+                    key={example}
+                    type="button"
+                    onClick={() => {
+                      setAccessionInput(example);
+                      loadRawStudy(example);
+                    }}
+                    className="rounded-full bg-muted px-2.5 py-1 font-mono text-[10px] text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                  >
+                    {example}
+                  </button>
+                ))}
+              </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <input
                   type="text"
-                  value={geoInput}
-                  onChange={(e) => setGeoInput(e.target.value.toUpperCase())}
-                  placeholder="GSE281732"
+                  value={accessionInput}
+                  onChange={(e) => setAccessionInput(e.target.value.toUpperCase())}
+                  placeholder="GSE281732 · E-MTAB-6419 · PXD040292"
                   className="flex-1 rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm outline-none ring-ring focus:ring-2"
                 />
                 <button
                   type="button"
-                  onClick={() => loadGeoStudy(geoInput)}
-                  disabled={loadingGeo}
+                  onClick={() => loadRawStudy(accessionInput)}
+                  disabled={loadingRaw || !RAW_ACCESSION.test(accessionInput.trim())}
                   className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                 >
-                  {loadingGeo ? "Loading…" : "Load study"}
+                  {loadingRaw ? "Loading…" : "Load study"}
                 </button>
               </div>
             </section>
@@ -324,7 +362,8 @@ export function AnalysisWorkspace({
               <RawDataAnalysis study={rawTarget} />
             ) : (
               <div className="flex min-h-[200px] items-center justify-center rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                Enter a GSE accession above to connect to NCBI raw files and run analysis.
+                Enter a GSE, E-MTAB, or PXD accession to connect to repository files and run
+                analysis on raw quantification data.
               </div>
             )}
           </div>

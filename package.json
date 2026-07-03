@@ -10,7 +10,8 @@
     "ingest": "tsx scripts/ingest-all.ts",
     "ingest:geo": "tsx scripts/ingest-geo.ts",
     "sync:supabase": "tsx scripts/push-via-rpc.ts",
-    "db:verify": "tsx scripts/verify-db.ts"
+    "db:verify": "tsx scripts/verify-db.ts",
+    "analyze:deseq2": "tsx scripts/deseq2/run-local.ts"
   },
   "dependencies": {
     "@netlify/plugin-nextjs": "^5.15.12",

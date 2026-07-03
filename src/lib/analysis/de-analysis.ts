@@ -1,16 +1,17 @@
+import { benjaminiHochberg } from "@/lib/analysis/fdr";
 import type { ParsedSeriesMatrix } from "@/lib/raw-data/parse-series-matrix";
 
 export interface DEResult {
   gene: string;
   log2FC: number;
   pValue: number;
+  adjPValue: number;
   meanA: number;
   meanB: number;
   significant: boolean;
   direction: "up" | "down" | "ns";
 }
 
-/** Welch t-test p-value (two-sided). */
 function welchP(a: number[], b: number[]): number {
   const na = a.length;
   const nb = b.length;
@@ -31,7 +32,6 @@ function welchP(a: number[], b: number[]): number {
   return 2 * (1 - tDistCdf(t, df));
 }
 
-/** Regularized incomplete beta approximation for t CDF. */
 function tDistCdf(t: number, df: number): number {
   const x = df / (df + t * t);
   return 1 - 0.5 * incompleteBeta(df / 2, 0.5, x);
@@ -40,8 +40,7 @@ function tDistCdf(t: number, df: number): number {
 function incompleteBeta(a: number, b: number, x: number): number {
   if (x <= 0) return 0;
   if (x >= 1) return 1;
-  const lnBeta =
-    lgamma(a) + lgamma(b) - lgamma(a + b);
+  const lnBeta = lgamma(a) + lgamma(b) - lgamma(a + b);
   const front = Math.exp(Math.log(x) * a + Math.log(1 - x) * b - lnBeta) / a;
   let f = 1;
   let c = 1;
@@ -87,8 +86,9 @@ export function runDifferentialExpression(opts: {
   groupB: string[];
   genes?: string[];
   logOffset?: number;
+  fdrThreshold?: number;
 }): DEResult[] {
-  const { matrix, groupA, groupB, genes, logOffset = 1 } = opts;
+  const { matrix, groupA, groupB, genes, logOffset = 1, fdrThreshold = 0.05 } = opts;
   if (groupA.length < 2 || groupB.length < 2) {
     throw new Error("Each group needs at least 2 samples");
   }
@@ -97,7 +97,7 @@ export function runDifferentialExpression(opts: {
     ? genes.filter((g) => matrix.values[g])
     : matrix.genes;
 
-  const results: DEResult[] = [];
+  const raw: Omit<DEResult, "adjPValue" | "significant" | "direction">[] = [];
 
   for (const gene of targetGenes) {
     const row = matrix.values[gene];
@@ -113,27 +113,37 @@ export function runDifferentialExpression(opts: {
     const meanB = logB.reduce((s, v) => s + v, 0) / logB.length;
     const log2FC = meanB - meanA;
     const pValue = welchP(logA, logB);
-    const significant = pValue < 0.05 && Math.abs(log2FC) >= 0.58;
 
-    results.push({
+    raw.push({
       gene,
       log2FC: Number(log2FC.toFixed(4)),
       pValue: Math.max(pValue, 1e-300),
       meanA: Number(meanA.toFixed(4)),
       meanB: Number(meanB.toFixed(4)),
-      significant,
-      direction: significant ? (log2FC > 0 ? "up" : "down") : "ns",
     });
   }
 
-  return results.sort((a, b) => a.pValue - b.pValue);
+  const adj = benjaminiHochberg(raw.map((r) => r.pValue));
+
+  return raw
+    .map((r, i) => {
+      const adjPValue = adj[i];
+      const significant = adjPValue < fdrThreshold && Math.abs(r.log2FC) >= 0.58;
+      return {
+        ...r,
+        adjPValue: Number(adjPValue.toExponential(3)),
+        significant,
+        direction: significant ? (r.log2FC > 0 ? "up" : "down") : "ns",
+      } as DEResult;
+    })
+    .sort((a, b) => a.pValue - b.pValue);
 }
 
 export function deToVolcano(results: DEResult[]) {
   return results.map((r) => ({
     name: r.gene,
     log2FC: r.log2FC,
-    negLog10P: Number((-Math.log10(r.pValue)).toFixed(4)),
+    negLog10P: Number((-Math.log10(r.adjPValue || r.pValue)).toFixed(4)),
     significant: r.significant,
     direction: r.direction,
   }));

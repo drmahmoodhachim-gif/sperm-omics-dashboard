@@ -4,8 +4,8 @@ import type { Dataset } from "@/lib/types";
 import { OMICS_LABELS, TISSUE_LABELS } from "@/lib/utils";
 import { ANALYZABLE_ACCESSIONS } from "@/lib/analysis/catalog";
 
-function isGeoAccession(accession: string) {
-  return /^GSE\d+$/i.test(accession.trim());
+function supportsRawAnalysis(accession: string) {
+  return /^(GSE\d+|E-MTAB-\d+|PXD\d+)$/i.test(accession.trim());
 }
 
 export function DatasetsTable({ datasets }: { datasets: Dataset[] }) {
@@ -74,7 +74,7 @@ export function DatasetsTable({ datasets }: { datasets: Dataset[] }) {
                       Analyze →
                     </Link>
                   )}
-                  {isGeoAccession(d.accession) && (
+                  {supportsRawAnalysis(d.accession) && (
                     <Link
                       href={`/analysis?study=${encodeURIComponent(d.accession)}&mode=raw`}
                       className="whitespace-nowrap rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"

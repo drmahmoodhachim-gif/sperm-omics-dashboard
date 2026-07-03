@@ -2,11 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Activity,
+  BarChart3,
+  CheckCircle2,
   Database,
   Download,
+  Flame,
   Loader2,
   Play,
   RefreshCw,
+  Table2,
+  TrendingUp,
 } from "lucide-react";
 import { FigureRenderer } from "@/components/figures/FigureRenderer";
 import { FigureExport } from "@/components/figures/FigureExport";
@@ -19,6 +25,7 @@ interface RawFile {
   url: string;
   type: string;
   description: string;
+  analyzable?: boolean;
 }
 
 interface MatrixSample {
@@ -29,54 +36,80 @@ interface MatrixSample {
 
 interface MatrixPreview {
   accession: string;
+  source?: string;
   sampleCount: number;
   geneCount: number;
   parsedGenes: number;
   samples: MatrixSample[];
-  geneSample: string[];
+}
+
+interface DERow {
+  gene: string;
+  log2FC: number;
+  pValue: number;
+  adjPValue: number;
+  significant: boolean;
+  direction: string;
+}
+
+interface AnalysisResult {
+  source: string;
+  method: string;
+  totalGenes: number;
+  significantGenes: number;
+  upregulated: number;
+  downregulated: number;
+  comparison: { groupA: string; groupB: string };
+  volcano: unknown[];
+  pca: { points: unknown[]; variance: { pc1: number; pc2: number } };
+  heatmap: {
+    genes: string[];
+    samples: string[];
+    cells: unknown[];
+    min: number;
+    max: number;
+    sampleLabels?: Record<string, string>;
+  };
+  results: DERow[];
 }
 
 type SampleGroup = "A" | "B" | null;
+type Step = 1 | 2 | 3 | 4;
+type ResultTab = "volcano" | "pca" | "heatmap" | "table";
+
+const STEPS = [
+  { n: 1, label: "Connect", icon: Database },
+  { n: 2, label: "Load matrix", icon: Download },
+  { n: 3, label: "Group samples", icon: Activity },
+  { n: 4, label: "Results", icon: BarChart3 },
+] as const;
 
 function suggestGroup(char: string): SampleGroup {
   const c = char.toLowerCase();
-  if (
-    c.includes("control") ||
-    c.includes("fertile") ||
-    c.includes("normal") ||
-    c.includes("healthy") ||
-    c.includes("wild")
-  ) {
-    return "A";
-  }
-  if (
-    c.includes("infertile") ||
-    c.includes("case") ||
-    c.includes("disease") ||
-    c.includes("patient") ||
-    c.includes("azoosperm") ||
-    c.includes("astheno") ||
-    c.includes("oligo")
-  ) {
-    return "B";
-  }
+  if (/control|fertile|normal|healthy|wild|wt|norm/.test(c)) return "A";
+  if (/infertile|case|disease|patient|azoosperm|astheno|oligo|mut/.test(c)) return "B";
   return null;
 }
 
 export function RawDataAnalysis({ study }: { study: Dataset }) {
+  const accession = study.accession.toUpperCase();
+  const [step, setStep] = useState<Step>(1);
   const [files, setFiles] = useState<RawFile[]>([]);
-  const [supportsInline, setSupportsInline] = useState(false);
+  const [meta, setMeta] = useState<{ source?: string; kind?: string }>({});
+  const [selectedFileUrl, setSelectedFileUrl] = useState<string>("");
   const [matrix, setMatrix] = useState<MatrixPreview | null>(null);
   const [assignments, setAssignments] = useState<Record<string, SampleGroup>>({});
+  const [groupALabel, setGroupALabel] = useState("Control / Fertile");
+  const [groupBLabel, setGroupBLabel] = useState("Case / Infertile");
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [loadingMatrix, setLoadingMatrix] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [figure, setFigure] = useState<Figure | null>(null);
-  const [stats, setStats] = useState<{ total: number; sig: number } | null>(null);
+  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [resultTab, setResultTab] = useState<ResultTab>("volcano");
   const [geneFilter, setGeneFilter] = useState("");
 
-  const accession = study.accession.toUpperCase();
+  const analyzableFiles = files.filter((f) => f.analyzable || f.type === "expression_matrix" || f.type === "processed");
 
   const loadFiles = useCallback(async () => {
     setLoadingFiles(true);
@@ -86,9 +119,14 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to list files");
       setFiles(data.files ?? []);
-      setSupportsInline(data.supportsInlineAnalysis ?? false);
+      setMeta({ source: data.source, kind: data.kind });
+      const first = (data.files as RawFile[]).find(
+        (f) => f.analyzable || f.type === "expression_matrix" || f.type === "processed"
+      );
+      if (first) setSelectedFileUrl(first.url);
+      setStep(1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load file list");
+      setError(e instanceof Error ? e.message : "Failed to load files");
     } finally {
       setLoadingFiles(false);
     }
@@ -98,28 +136,29 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
     setLoadingMatrix(true);
     setError(null);
     try {
-      const res = await fetch(`/api/raw/${encodeURIComponent(accession)}/matrix`);
+      const qs = selectedFileUrl
+        ? `?fileUrl=${encodeURIComponent(selectedFileUrl)}`
+        : "";
+      const res = await fetch(`/api/raw/${encodeURIComponent(accession)}/matrix${qs}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load matrix");
       setMatrix(data);
-
       const auto: Record<string, SampleGroup> = {};
       for (const s of data.samples as MatrixSample[]) {
-        const hint = s.characteristics.join(" ") + " " + s.title;
-        auto[s.id] = suggestGroup(hint);
+        auto[s.id] = suggestGroup(s.characteristics.join(" ") + " " + s.title);
       }
       setAssignments(auto);
+      setStep(3);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load expression matrix");
+      setError(e instanceof Error ? e.message : "Failed to load matrix");
     } finally {
       setLoadingMatrix(false);
     }
-  }, [accession]);
+  }, [accession, selectedFileUrl]);
 
   useEffect(() => {
     setMatrix(null);
-    setFigure(null);
-    setStats(null);
+    setResult(null);
     setAssignments({});
     loadFiles();
   }, [loadFiles]);
@@ -137,35 +176,24 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
     setAnalyzing(true);
     setError(null);
     try {
-      const genes = geneFilter
-        .split(/[,\s]+/)
-        .map((g) => g.trim())
-        .filter(Boolean);
-
+      const genes = geneFilter.split(/[,\s]+/).map((g) => g.trim()).filter(Boolean);
       const res = await fetch(`/api/raw/${encodeURIComponent(accession)}/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           groupA,
           groupB,
-          genes: genes.length > 0 ? genes : undefined,
-          groupALabel: "Group A",
-          groupBLabel: "Group B",
+          groupALabel,
+          groupBLabel,
+          genes: genes.length ? genes : undefined,
+          fileUrl: selectedFileUrl || undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Analysis failed");
-
-      setStats({ total: data.totalGenes, sig: data.significantGenes });
-      setFigure({
-        id: "raw-analysis",
-        datasetId: study.id,
-        title: `Raw DE: ${accession} (${data.comparison.groupA} vs ${data.comparison.groupB})`,
-        figureType: "volcano",
-        caption: `${data.totalGenes} genes tested · ${data.significantGenes} significant (p<0.05, |log2FC|≥0.58) · computed from GEO Series Matrix`,
-        isPublicationReady: true,
-        data: { points: data.volcano },
-      });
+      setResult(data);
+      setStep(4);
+      setResultTab("volcano");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Analysis failed");
     } finally {
@@ -173,51 +201,121 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
     }
   }
 
-  function cycleGroup(sampleId: string) {
-    setAssignments((prev) => {
-      const cur = prev[sampleId] ?? null;
-      const next: SampleGroup = cur === null ? "A" : cur === "A" ? "B" : null;
-      return { ...prev, [sampleId]: next };
-    });
+  function setGroup(sampleId: string, g: SampleGroup) {
+    setAssignments((prev) => ({ ...prev, [sampleId]: g }));
   }
+
+  const volcanoFigure: Figure | null = result
+    ? {
+        id: "raw-volcano",
+        datasetId: study.id,
+        title: `Volcano: ${accession}`,
+        figureType: "volcano",
+        isPublicationReady: true,
+        data: { points: result.volcano },
+      }
+    : null;
+
+  const pcaFigure: Figure | null = result
+    ? {
+        id: "raw-pca",
+        datasetId: study.id,
+        title: `PCA: ${accession}`,
+        figureType: "pca",
+        isPublicationReady: true,
+        data: { points: result.pca.points, variance: result.pca.variance },
+      }
+    : null;
+
+  const heatmapFigure: Figure | null = result
+    ? {
+        id: "raw-heatmap",
+        datasetId: study.id,
+        title: `Top DE heatmap: ${accession}`,
+        figureType: "heatmap",
+        isPublicationReady: true,
+        data: result.heatmap,
+      }
+    : null;
 
   return (
     <div className="space-y-6">
-      <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
-        <h3 className="flex items-center gap-2 text-sm font-semibold">
-          <Database className="h-4 w-4 text-primary" />
-          Source raw files — {accession}
-        </h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Download links from NCBI GEO / PRIDE. GEO Series Matrix files can be analyzed directly
-          in this workspace.
-        </p>
+      {/* Step indicator */}
+      <div className="rounded-xl border border-border bg-gradient-to-r from-primary/5 via-card to-teal-500/5 p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-primary">
+              Raw data pipeline
+            </p>
+            <h3 className="mt-1 text-lg font-bold">{accession}</h3>
+            <p className="text-sm text-muted-foreground">{meta.source ?? study.title}</p>
+          </div>
+          <Badge className="text-xs">{meta.kind?.toUpperCase() ?? study.repository}</Badge>
+        </div>
+        <ol className="mt-5 flex flex-wrap gap-2">
+          {STEPS.map(({ n, label, icon: Icon }) => (
+            <li
+              key={n}
+              className={cn(
+                "flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
+                step >= n ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+              )}
+            >
+              {step > n ? (
+                <CheckCircle2 className="h-3.5 w-3.5" />
+              ) : (
+                <Icon className="h-3.5 w-3.5" />
+              )}
+              {label}
+            </li>
+          ))}
+        </ol>
+      </div>
 
+      {/* Step 1: Files */}
+      <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
+        <h4 className="font-semibold">1 · Source files from repository</h4>
         {loadingFiles ? (
-          <p className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading file list…
+          <p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Connecting to source…
           </p>
         ) : (
           <ul className="mt-4 space-y-2">
             {files.map((f) => (
               <li
                 key={f.url}
-                className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-border/60 px-3 py-2 text-sm"
+                className={cn(
+                  "flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2.5 text-sm transition-colors",
+                  selectedFileUrl === f.url && f.analyzable !== false &&
+                    (f.type === "expression_matrix" || f.type === "processed")
+                    ? "border-primary bg-primary/5"
+                    : "border-border/60"
+                )}
               >
-                <div>
+                <div className="min-w-0 flex-1">
                   <p className="font-medium">{f.name}</p>
                   <p className="text-xs text-muted-foreground">{f.description}</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="secondary">{f.type.replace(/_/g, " ")}</Badge>
+                <div className="flex shrink-0 items-center gap-2">
+                  {(f.analyzable || f.type === "expression_matrix" || f.type === "processed") && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedFileUrl(f.url);
+                        setStep(2);
+                      }}
+                      className="rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary hover:bg-primary/20"
+                    >
+                      Use for analysis
+                    </button>
+                  )}
                   <a
                     href={f.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                    className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
                   >
-                    <Download className="h-3.5 w-3.5" />
-                    Download
+                    <Download className="h-3 w-3" /> Download
                   </a>
                 </div>
               </li>
@@ -226,142 +324,240 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
         )}
       </section>
 
-      {supportsInline && (
-        <>
-          <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-semibold">Expression matrix</h3>
-                <p className="text-xs text-muted-foreground">
-                  Loads {accession} series matrix from NCBI FTP (up to 3,000 genes cached).
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={loadMatrix}
-                disabled={loadingMatrix}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              >
-                {loadingMatrix ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" />
-                )}
-                {matrix ? "Reload matrix" : "Load expression matrix"}
-              </button>
-            </div>
-
-            {matrix && (
-              <p className="mt-3 text-xs text-muted-foreground">
-                {matrix.sampleCount} samples · {matrix.geneCount.toLocaleString()} genes in file
-                · {matrix.parsedGenes.toLocaleString()} loaded for analysis
-              </p>
+      {/* Step 2: Load matrix */}
+      {analyzableFiles.length > 0 && (
+        <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
+          <h4 className="font-semibold">2 · Load expression / quantification matrix</h4>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Parses sample × feature table directly from the source file (not published summary stats).
+          </p>
+          {selectedFileUrl && (
+            <p className="mt-2 truncate font-mono text-xs text-primary">
+              {selectedFileUrl.split("/").pop()}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={loadMatrix}
+            disabled={loadingMatrix}
+            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-md hover:bg-primary/90 disabled:opacity-50"
+          >
+            {loadingMatrix ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
             )}
-          </section>
-
+            {matrix ? "Reload matrix" : "Load matrix from source"}
+          </button>
           {matrix && (
-            <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
-              <h3 className="text-sm font-semibold">Assign sample groups</h3>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Click samples to cycle: unassigned → Group A → Group B. Groups auto-suggested from
-                sample characteristics where possible.
-              </p>
-              <div className="mt-2 flex gap-4 text-xs">
-                <span>
-                  Group A: <strong>{groupA.length}</strong>
-                </span>
-                <span>
-                  Group B: <strong>{groupB.length}</strong>
-                </span>
-              </div>
-              <div className="mt-4 max-h-64 space-y-1 overflow-y-auto">
-                {matrix.samples.map((s) => {
-                  const g = assignments[s.id];
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onClick={() => cycleGroup(s.id)}
-                      className={cn(
-                        "flex w-full flex-col rounded-lg border px-3 py-2 text-left text-sm transition-colors",
-                        g === "A" && "border-blue-400 bg-blue-50",
-                        g === "B" && "border-red-400 bg-red-50",
-                        !g && "border-border hover:bg-muted"
-                      )}
-                    >
-                      <span className="font-mono text-xs text-muted-foreground">{s.id}</span>
-                      <span className="font-medium">{s.title}</span>
-                      {s.characteristics.length > 0 && (
-                        <span className="text-xs text-muted-foreground">
-                          {s.characteristics.join(" · ")}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="mt-4">
-                <label className="text-xs font-medium text-muted-foreground">
-                  Optional: specific genes (comma-separated). Leave blank for all loaded genes.
-                </label>
-                <input
-                  type="text"
-                  value={geneFilter}
-                  onChange={(e) => setGeneFilter(e.target.value)}
-                  placeholder="e.g. PRM1, AKAP4, DDX4"
-                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-ring focus:ring-2"
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={runAnalysis}
-                disabled={analyzing || groupA.length < 2 || groupB.length < 2}
-                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              >
-                {analyzing ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Play className="h-4 w-4" />
-                )}
-                Run differential expression
-              </button>
-            </section>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              {[
+                { label: "Samples", value: matrix.sampleCount },
+                { label: "Features in file", value: matrix.geneCount.toLocaleString() },
+                { label: "Loaded for DE", value: matrix.parsedGenes.toLocaleString() },
+              ].map(({ label, value }) => (
+                <div key={label} className="rounded-lg bg-muted/50 px-4 py-3 text-center">
+                  <p className="text-2xl font-bold text-primary">{value}</p>
+                  <p className="text-xs text-muted-foreground">{label}</p>
+                </div>
+              ))}
+            </div>
           )}
-
-          {figure && (
-            <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
-              <h3 className="text-sm font-semibold">Your analysis results</h3>
-              {stats && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {stats.total.toLocaleString()} genes · {stats.sig} significant — computed from
-                  raw GEO matrix, not published findings
-                </p>
-              )}
-              <div
-                id="figure-content-raw-analysis"
-                className="mt-4 rounded-lg border border-border/60 bg-white p-4"
-              >
-                <FigureRenderer figure={figure} />
-              </div>
-              <FigureExport
-                figureId="raw-analysis"
-                figureTitle={figure.title}
-                className="mt-4"
-              />
-            </section>
-          )}
-        </>
+        </section>
       )}
 
-      {!supportsInline && files.length > 0 && (
-        <p className="rounded-lg border border-dashed border-border bg-muted/30 p-4 text-sm text-muted-foreground">
-          Inline analysis is available for GEO Series (GSE…) with a series matrix file. For PRIDE
-          proteomics and other repositories, download processed quantification files above and use
-          the Methods page pipelines — full MS raw file analysis requires external tools (MaxQuant,
-          Spectronaut, etc.).
-        </p>
+      {/* Step 3: Group samples */}
+      {matrix && (
+        <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
+          <h4 className="font-semibold">3 · Define comparison groups</h4>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            <label className="text-sm">
+              <span className="text-xs font-medium text-blue-600">Group A label</span>
+              <input
+                value={groupALabel}
+                onChange={(e) => setGroupALabel(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-blue-200 bg-blue-50/50 px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="text-sm">
+              <span className="text-xs font-medium text-red-600">Group B label</span>
+              <input
+                value={groupBLabel}
+                onChange={(e) => setGroupBLabel(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-red-200 bg-red-50/50 px-3 py-2 text-sm"
+              />
+            </label>
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div>
+              <p className="mb-2 text-xs font-semibold text-blue-600">
+                Group A ({groupA.length})
+              </p>
+              <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-blue-200 bg-blue-50/30 p-2">
+                {matrix.samples.map((s) => (
+                  <button
+                    key={`a-${s.id}`}
+                    type="button"
+                    onClick={() => setGroup(s.id, assignments[s.id] === "A" ? null : "A")}
+                    className={cn(
+                      "w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors",
+                      assignments[s.id] === "A"
+                        ? "bg-blue-600 text-white"
+                        : "hover:bg-blue-100"
+                    )}
+                  >
+                    <span className="font-mono opacity-80">{s.id}</span> · {s.title.slice(0, 40)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="mb-2 text-xs font-semibold text-red-600">
+                Group B ({groupB.length})
+              </p>
+              <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-red-200 bg-red-50/30 p-2">
+                {matrix.samples.map((s) => (
+                  <button
+                    key={`b-${s.id}`}
+                    type="button"
+                    onClick={() => setGroup(s.id, assignments[s.id] === "B" ? null : "B")}
+                    className={cn(
+                      "w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors",
+                      assignments[s.id] === "B"
+                        ? "bg-red-600 text-white"
+                        : "hover:bg-red-100"
+                    )}
+                  >
+                    <span className="font-mono opacity-80">{s.id}</span> · {s.title.slice(0, 40)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <input
+            type="text"
+            value={geneFilter}
+            onChange={(e) => setGeneFilter(e.target.value)}
+            placeholder="Optional: PRM1, AKAP4, DDX4 (blank = all features)"
+            className="mt-4 w-full rounded-lg border border-border px-3 py-2 text-sm"
+          />
+
+          <button
+            type="button"
+            onClick={runAnalysis}
+            disabled={analyzing || groupA.length < 2 || groupB.length < 2}
+            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-primary to-teal-600 px-6 py-3 text-sm font-semibold text-white shadow-lg hover:opacity-95 disabled:opacity-50"
+          >
+            {analyzing ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <Play className="h-5 w-5" />
+            )}
+            Run differential expression (Welch + BH-FDR)
+          </button>
+          <p className="mt-2 text-xs text-muted-foreground">
+            For RNA-seq raw counts, run{" "}
+            <code className="rounded bg-muted px-1">npm run analyze:deseq2</code> locally with
+            DESeq2.
+          </p>
+        </section>
+      )}
+
+      {/* Step 4: Results */}
+      {result && (
+        <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
+          <h4 className="font-semibold">4 · Your analysis results</h4>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {result.method} · {result.source} · computed from source files
+          </p>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-4">
+            {[
+              { label: "Features tested", value: result.totalGenes, icon: Table2 },
+              { label: "Significant (FDR)", value: result.significantGenes, icon: Flame },
+              { label: "Up in B", value: result.upregulated, icon: TrendingUp },
+              { label: "Down in B", value: result.downregulated, icon: TrendingUp },
+            ].map(({ label, value, icon: Icon }) => (
+              <div
+                key={label}
+                className="flex items-center gap-3 rounded-xl border border-border/60 bg-gradient-to-br from-card to-muted/30 p-4"
+              >
+                <Icon className="h-8 w-8 text-primary/60" />
+                <div>
+                  <p className="text-2xl font-bold">{value.toLocaleString()}</p>
+                  <p className="text-xs text-muted-foreground">{label}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-2 border-b border-border pb-3">
+            {(
+              [
+                ["volcano", "Volcano"],
+                ["pca", "PCA"],
+                ["heatmap", "Heatmap"],
+                ["table", "DE table"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setResultTab(id)}
+                className={cn(
+                  "rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+                  resultTab === id
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div id="figure-content-raw-analysis" className="mt-4 rounded-lg border bg-white p-4">
+            {resultTab === "volcano" && volcanoFigure && <FigureRenderer figure={volcanoFigure} />}
+            {resultTab === "pca" && pcaFigure && <FigureRenderer figure={pcaFigure} />}
+            {resultTab === "heatmap" && heatmapFigure && <FigureRenderer figure={heatmapFigure} />}
+            {resultTab === "table" && (
+              <div className="max-h-96 overflow-auto">
+                <table className="publication-table w-full text-xs">
+                  <thead>
+                    <tr>
+                      <th>Feature</th>
+                      <th>log2FC</th>
+                      <th>p-value</th>
+                      <th>FDR</th>
+                      <th>Sig</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.results.slice(0, 100).map((r) => (
+                      <tr key={r.gene} className={r.significant ? "bg-primary/5" : ""}>
+                        <td className="font-medium">{r.gene}</td>
+                        <td>{r.log2FC.toFixed(3)}</td>
+                        <td>{r.pValue.toExponential(1)}</td>
+                        <td>{r.adjPValue}</td>
+                        <td>{r.significant ? r.direction : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {volcanoFigure && (
+            <FigureExport
+              figureId="raw-analysis"
+              figureTitle={volcanoFigure.title}
+              className="mt-4"
+            />
+          )}
+        </section>
       )}
 
       {error && (
