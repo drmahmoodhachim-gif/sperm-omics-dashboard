@@ -16,7 +16,9 @@ import {
 } from "lucide-react";
 import { FigureRenderer } from "@/components/figures/FigureRenderer";
 import { FigureExport } from "@/components/figures/FigureExport";
+import { LocalOnlyGuidance } from "@/components/analysis/LocalOnlyGuidance";
 import { Badge } from "@/components/ui/Badge";
+import { isLocalOnlyError } from "@/lib/raw-data/local-only";
 import type { Dataset, Figure } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -108,23 +110,32 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [resultTab, setResultTab] = useState<ResultTab>("volcano");
   const [geneFilter, setGeneFilter] = useState("");
+  const [localOnly, setLocalOnly] = useState(false);
+  const [localOnlyReasons, setLocalOnlyReasons] = useState<string[]>([]);
+  const [repositoryUrl, setRepositoryUrl] = useState<string | undefined>(
+    study.url
+  );
 
-  const analyzableFiles = files.filter((f) => f.analyzable || f.type === "expression_matrix" || f.type === "processed");
+  const analyzableFiles = files.filter((f) => f.analyzable);
+  const showLocalOnly =
+    localOnly || (analyzableFiles.length === 0 && !loadingFiles && files.length > 0);
+  const showLocalOnlyFromError = isLocalOnlyError(error);
 
   const loadFiles = useCallback(async () => {
     setLoadingFiles(true);
     setError(null);
+    setLocalOnly(false);
+    setLocalOnlyReasons([]);
     try {
       const res = await fetch(`/api/raw/${encodeURIComponent(accession)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to list files");
       setFiles(data.files ?? []);
       setMeta({ source: data.source, kind: data.kind });
-      const first =
-        (data.files as RawFile[]).find((f) => f.analyzable) ??
-        (data.files as RawFile[]).find(
-          (f) => f.type === "processed" || f.type === "expression_matrix"
-        );
+      setLocalOnly(Boolean(data.localOnly));
+      setLocalOnlyReasons(data.localOnlyReasons ?? []);
+      if (data.repositoryUrl) setRepositoryUrl(data.repositoryUrl);
+      const first = (data.files as RawFile[]).find((f) => f.analyzable);
       if (first) setSelectedFileUrl(first.url);
       setStep(1);
     } catch (e) {
@@ -299,7 +310,7 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
                   <p className="text-xs text-muted-foreground">{f.description}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  {(f.analyzable || f.type === "expression_matrix" || f.type === "processed") && (
+                  {f.analyzable ? (
                     <button
                       type="button"
                       onClick={() => {
@@ -310,6 +321,10 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
                     >
                       Use for analysis
                     </button>
+                  ) : (
+                    <Badge variant="secondary" className="text-[10px]">
+                      Local download
+                    </Badge>
                   )}
                   <a
                     href={f.url}
@@ -326,8 +341,16 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
         )}
       </section>
 
+      {(showLocalOnly || showLocalOnlyFromError) && (
+        <LocalOnlyGuidance
+          accession={accession}
+          reasons={localOnlyReasons.length ? localOnlyReasons : undefined}
+          repositoryUrl={repositoryUrl}
+        />
+      )}
+
       {/* Step 2: Load matrix */}
-      {analyzableFiles.length > 0 && (
+      {analyzableFiles.length > 0 && !showLocalOnly && (
         <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
           <h4 className="font-semibold">2 · Load expression / quantification matrix</h4>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -564,7 +587,7 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
         </section>
       )}
 
-      {error && (
+      {error && !showLocalOnly && !showLocalOnlyFromError && (
         <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {error}
         </p>

@@ -8,6 +8,7 @@ import { listArrayExpressFiles } from "@/lib/raw-data/arrayexpress-fetch";
 import { listPrideQuantFiles } from "@/lib/raw-data/pride-quant";
 import { listRawFiles } from "@/lib/raw-data/geo-fetch";
 import { isGeoAccession } from "@/lib/raw-data/geo-path";
+import { classifyRawFileAvailability } from "@/lib/raw-data/local-only";
 
 interface RawFileEntry {
   name: string;
@@ -43,11 +44,29 @@ export async function GET(
     }));
   }
 
+  const availability = classifyRawFileAvailability(files, acc);
+
   return NextResponse.json({
     accession: acc,
     source: sourceLabel(acc),
     kind,
     supportsInlineAnalysis: supportsInlineAnalysis(acc),
+    localOnly: availability.localOnly,
+    localOnlyReasons: availability.reasons,
+    repositoryUrl: availability.repositoryUrl ?? studyRepositoryUrl(acc),
     files,
   });
+}
+
+function studyRepositoryUrl(acc: string): string | undefined {
+  if (/^GSE/i.test(acc)) {
+    return `https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=${acc}`;
+  }
+  if (/^PXD/i.test(acc)) {
+    return `https://www.ebi.ac.uk/pride/archive/projects/${acc}`;
+  }
+  if (/^E-MTAB/i.test(acc)) {
+    return `https://www.ebi.ac.uk/biostudies/studies/${acc}`;
+  }
+  return undefined;
 }
