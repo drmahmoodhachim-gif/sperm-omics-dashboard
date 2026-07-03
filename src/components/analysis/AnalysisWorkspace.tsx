@@ -9,10 +9,16 @@ import { FigureExport } from "@/components/figures/FigureExport";
 import { Badge } from "@/components/ui/Badge";
 import { buildFigureFromSelection } from "@/lib/analysis/build-figure";
 import { suggestFigureTypes } from "@/lib/analysis/catalog";
+import type { RawCapableStudy } from "@/lib/analysis/resolve-dataset";
+import {
+  defaultStudyUrl,
+  isRawAnalyzableAccession,
+  normalizeRawAccession,
+  repositoryForAccession,
+  sourceLabel,
+} from "@/lib/raw-data/accession";
 import type { Dataset, FigureType, Measurement } from "@/lib/types";
 import { FIGURE_LABELS, OMICS_LABELS, TISSUE_LABELS, cn } from "@/lib/utils";
-
-const RAW_ACCESSION = /^(GSE\d+|E-MTAB-\d+|PXD\d+)$/i;
 
 interface StudyWithCount extends Dataset {
   variableCount: number;
@@ -20,9 +26,11 @@ interface StudyWithCount extends Dataset {
 
 export function AnalysisWorkspace({
   initialStudies,
+  rawStudies,
   initialStudyId,
 }: {
   initialStudies: StudyWithCount[];
+  rawStudies: RawCapableStudy[];
   initialStudyId?: string;
 }) {
   const router = useRouter();
@@ -30,6 +38,7 @@ export function AnalysisWorkspace({
   const [pending, startTransition] = useTransition();
 
   const [studies] = useState(initialStudies);
+  const [rawStudyList] = useState(rawStudies);
   const [studyQuery, setStudyQuery] = useState("");
   const [selectedStudy, setSelectedStudy] = useState<StudyWithCount | null>(() =>
     initialStudies.find(
@@ -43,22 +52,29 @@ export function AnalysisWorkspace({
   const mode = searchParams.get("mode") === "raw" ? "raw" : "published";
   const [accessionInput, setAccessionInput] = useState(() => {
     const id = initialStudyId?.toUpperCase() ?? "";
-    if (RAW_ACCESSION.test(id)) return id;
-    return "GSE281732";
+    if (isRawAnalyzableAccession(id)) return normalizeRawAccession(id) ?? id;
+    const fromList = rawStudies.find(
+      (s) => s.rawAccession === id || s.id === initialStudyId || s.accession === initialStudyId
+    );
+    return fromList?.rawAccession ?? "";
   });
   const [rawStudy, setRawStudy] = useState<Dataset | null>(null);
   const [loadingRaw, setLoadingRaw] = useState(false);
 
+  const panelStudies = mode === "raw" ? rawStudyList : studies;
+
   const filteredStudies = useMemo(() => {
     const q = studyQuery.trim().toLowerCase();
-    if (!q) return studies;
-    return studies.filter(
+    if (!q) return panelStudies;
+    return panelStudies.filter(
       (s) =>
         s.title.toLowerCase().includes(q) ||
         s.accession.toLowerCase().includes(q) ||
-        s.phenotype?.toLowerCase().includes(q)
+        ("rawAccession" in s && (s as RawCapableStudy).rawAccession.toLowerCase().includes(q)) ||
+        s.phenotype?.toLowerCase().includes(q) ||
+        s.repository.toLowerCase().includes(q)
     );
-  }, [studies, studyQuery]);
+  }, [panelStudies, studyQuery]);
 
   const loadStudy = useCallback(async (study: StudyWithCount) => {
     setLoadingStudy(true);
@@ -151,50 +167,55 @@ export function AnalysisWorkspace({
   function setMode(next: "published" | "raw") {
     startTransition(() => {
       const params = new URLSearchParams(searchParams.toString());
-      if (next === "raw") params.set("mode", "raw");
-      else params.delete("mode");
+      if (next === "raw") {
+        params.set("mode", "raw");
+        const acc =
+          rawStudy?.accession ??
+          (selectedStudy ? resolveRawAccessionFromStudy(selectedStudy) : null);
+        if (acc) params.set("study", acc);
+      } else {
+        params.delete("mode");
+      }
       router.replace(`/analysis?${params.toString()}`);
     });
   }
 
-  function rawRepository(acc: string): Dataset["repository"] {
-    if (/^GSE/i.test(acc)) return "GEO";
-    if (/^E-MTAB/i.test(acc)) return "ArrayExpress";
-    if (/^PXD/i.test(acc)) return "PRIDE";
-    return "GEO";
+  function resolveRawAccessionFromStudy(study: Dataset): string | null {
+    if ("rawAccession" in study && typeof (study as RawCapableStudy).rawAccession === "string") {
+      return (study as RawCapableStudy).rawAccession;
+    }
+    return normalizeRawAccession(study.accession);
   }
 
-  function rawOmics(acc: string): Dataset["omicsType"] {
-    if (/^PXD/i.test(acc)) return "proteomics";
-    return "transcriptomics";
-  }
-
-  const loadRawStudy = useCallback(async (accession: string) => {
-    const acc = accession.trim().toUpperCase();
-    if (!RAW_ACCESSION.test(acc)) return;
+  const loadRawStudy = useCallback(async (accession: string, dataset?: Dataset) => {
+    const acc = normalizeRawAccession(accession);
+    if (!acc) return;
     setLoadingRaw(true);
     try {
-      const res = await fetch(`/api/datasets/${encodeURIComponent(acc)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setRawStudy(data.dataset);
+      if (dataset) {
+        setRawStudy({ ...dataset, accession: acc, repository: repositoryForAccession(acc) });
       } else {
-        setRawStudy({
-          id: acc,
-          accession: acc,
-          title: `${acc} — ${rawRepository(acc)} study`,
-          repository: rawRepository(acc),
-          omicsType: rawOmics(acc),
-          species: "human",
-          tissue: "spermatozoa",
-          url:
-            /^GSE/i.test(acc)
-              ? `https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=${acc}`
-              : /^PXD/i.test(acc)
-                ? `https://www.ebi.ac.uk/pride/archive/projects/${acc}`
-                : `https://www.ebi.ac.uk/biostudies/studies/${acc}`,
-        });
+        const res = await fetch(`/api/datasets/${encodeURIComponent(acc)}`);
+        if (res.ok) {
+          const data = await res.json();
+          setRawStudy({ ...data.dataset, accession: acc });
+        } else {
+          const fromList = rawStudyList.find((s) => s.rawAccession === acc);
+          setRawStudy(
+            fromList ?? {
+              id: acc,
+              accession: acc,
+              title: `${acc} — ${sourceLabel(acc)} study`,
+              repository: repositoryForAccession(acc),
+              omicsType: /^PXD/i.test(acc) ? "proteomics" : "transcriptomics",
+              species: "human",
+              tissue: "spermatozoa",
+              url: defaultStudyUrl(acc),
+            }
+          );
+        }
       }
+      setAccessionInput(acc);
       startTransition(() => {
         const params = new URLSearchParams(searchParams.toString());
         params.set("study", acc);
@@ -204,12 +225,16 @@ export function AnalysisWorkspace({
     } finally {
       setLoadingRaw(false);
     }
-  }, [router, searchParams]);
+  }, [router, searchParams, rawStudyList]);
+
+  function selectRawStudyFromLibrary(study: RawCapableStudy) {
+    loadRawStudy(study.rawAccession, study);
+  }
 
   const studyParam = searchParams.get("study");
 
   useEffect(() => {
-    if (mode === "raw" && studyParam && RAW_ACCESSION.test(studyParam)) {
+    if (mode === "raw" && studyParam && isRawAnalyzableAccession(studyParam)) {
       loadRawStudy(studyParam);
     }
   }, [mode, studyParam, loadRawStudy]);
@@ -223,11 +248,9 @@ export function AnalysisWorkspace({
     setSelectedVars(new Set(sig.map((m) => m.featureName)));
   }
 
-  const rawTarget =
-    rawStudy ??
-    (selectedStudy?.accession && RAW_ACCESSION.test(selectedStudy.accession)
-      ? selectedStudy
-      : null);
+  const rawTarget = rawStudy;
+
+  const activeRawAccession = rawTarget?.accession ?? accessionInput;
 
   return (
     <div className="grid gap-6 xl:grid-cols-[320px_1fr]">
@@ -235,11 +258,17 @@ export function AnalysisWorkspace({
       <section className="space-y-4">
         <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
           <h2 className="flex items-center gap-2 text-sm font-semibold">
-            <FlaskConical className="h-4 w-4 text-primary" />
-            Select study
+            {mode === "raw" ? (
+              <Database className="h-4 w-4 text-primary" />
+            ) : (
+              <FlaskConical className="h-4 w-4 text-primary" />
+            )}
+            {mode === "raw" ? "Raw-capable studies" : "Published studies"}
           </h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            Choose a curated dataset with pre-computed variables for analysis.
+            {mode === "raw"
+              ? `${rawStudyList.length} GEO / ArrayExpress / PRIDE datasets — pick one to connect source files.`
+              : "Curated datasets with pre-computed variables for analysis."}
           </p>
           <div className="relative mt-3">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -251,17 +280,25 @@ export function AnalysisWorkspace({
               className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm outline-none ring-ring focus:ring-2"
             />
           </div>
-          <ul className="mt-3 max-h-80 space-y-1 overflow-y-auto">
+          <ul className="mt-3 max-h-[28rem] space-y-1 overflow-y-auto">
             {filteredStudies.map((study) => {
+              const rawAcc =
+                "rawAccession" in study ? (study as RawCapableStudy).rawAccession : null;
               const active =
-                selectedStudy?.accession === study.accession ||
-                selectedStudy?.id === study.id;
+                mode === "raw"
+                  ? activeRawAccession === (rawAcc ?? study.accession)
+                  : selectedStudy?.accession === study.accession ||
+                    selectedStudy?.id === study.id;
               return (
-                <li key={study.accession}>
+                <li key={`${study.id}-${rawAcc ?? study.accession}`}>
                   <button
                     type="button"
-                    onClick={() => loadStudy(study)}
-                    disabled={loadingStudy}
+                    onClick={() =>
+                      mode === "raw"
+                        ? selectRawStudyFromLibrary(study as RawCapableStudy)
+                        : loadStudy(study as StudyWithCount)
+                    }
+                    disabled={mode === "raw" ? loadingRaw : loadingStudy}
                     className={cn(
                       "w-full rounded-lg border px-3 py-2.5 text-left text-sm transition-colors",
                       active
@@ -271,9 +308,13 @@ export function AnalysisWorkspace({
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-mono text-xs font-semibold text-primary">
-                        {study.accession}
+                        {rawAcc ?? study.accession}
                       </span>
-                      <Badge variant="secondary">{study.variableCount} vars</Badge>
+                      {mode === "raw" ? (
+                        <Badge variant="secondary">{sourceLabel(rawAcc ?? study.accession)}</Badge>
+                      ) : (
+                        <Badge variant="secondary">{study.variableCount} vars</Badge>
+                      )}
                     </div>
                     <p className="mt-1 line-clamp-2 text-xs leading-snug">{study.title}</p>
                     <p className="mt-1 text-xs text-muted-foreground">
@@ -320,38 +361,22 @@ export function AnalysisWorkspace({
         {mode === "raw" ? (
           <div className="space-y-6">
             <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
-              <h3 className="text-sm font-semibold">Repository accession</h3>
+              <h3 className="text-sm font-semibold">Or enter accession manually</h3>
               <p className="mt-1 text-xs text-muted-foreground">
-                Connect to raw source files from GEO (GSE), ArrayExpress (E-MTAB), or PRIDE (PXD).
-                Download matrices and run your own differential expression in-browser.
+                Any GSE, E-MTAB, or PXD ID — including studies not yet in the library.
               </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {["GSE281732", "E-MTAB-6419", "PXD040292"].map((example) => (
-                  <button
-                    key={example}
-                    type="button"
-                    onClick={() => {
-                      setAccessionInput(example);
-                      loadRawStudy(example);
-                    }}
-                    className="rounded-full bg-muted px-2.5 py-1 font-mono text-[10px] text-muted-foreground hover:bg-primary/10 hover:text-primary"
-                  >
-                    {example}
-                  </button>
-                ))}
-              </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <input
                   type="text"
                   value={accessionInput}
                   onChange={(e) => setAccessionInput(e.target.value.toUpperCase())}
-                  placeholder="GSE281732 · E-MTAB-6419 · PXD040292"
+                  placeholder="GSE281732 · PXD040292 · E-MTAB-6419"
                   className="flex-1 rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm outline-none ring-ring focus:ring-2"
                 />
                 <button
                   type="button"
                   onClick={() => loadRawStudy(accessionInput)}
-                  disabled={loadingRaw || !RAW_ACCESSION.test(accessionInput.trim())}
+                  disabled={loadingRaw || !isRawAnalyzableAccession(accessionInput.trim())}
                   className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                 >
                   {loadingRaw ? "Loading…" : "Load study"}
@@ -362,8 +387,9 @@ export function AnalysisWorkspace({
               <RawDataAnalysis study={rawTarget} />
             ) : (
               <div className="flex min-h-[200px] items-center justify-center rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                Enter a GSE, E-MTAB, or PXD accession to connect to repository files and run
-                analysis on raw quantification data.
+                Select a study from the left panel ({rawStudyList.length} available) or enter an
+                accession above. RNA-seq GEO studies auto-load supplementary quant files when the
+                series matrix is metadata-only.
               </div>
             )}
           </div>

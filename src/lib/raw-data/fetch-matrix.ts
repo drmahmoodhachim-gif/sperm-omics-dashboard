@@ -1,7 +1,7 @@
 import { fetchArrayExpressMatrix } from "./arrayexpress-fetch";
 import { fetchGeoSeriesMatrix } from "./geo-fetch";
 import { fetchPrideQuantMatrix } from "./pride-quant";
-import { accessionKind } from "./parse-quant-table";
+import { accessionKind, normalizeRawAccession } from "./accession";
 import type { ParsedSeriesMatrix } from "./parse-series-matrix";
 
 export type MatrixSource = "geo" | "arrayexpress" | "pride" | "auto";
@@ -30,7 +30,7 @@ export async function fetchExpressionMatrix(
   accession: string,
   opts?: { fileUrl?: string; source?: MatrixSource }
 ): Promise<ParsedSeriesMatrix> {
-  const acc = accession.toUpperCase();
+  const acc = normalizeRawAccession(accession) ?? accession.toUpperCase();
   const cacheKey = `${acc}:${opts?.fileUrl ?? "default"}`;
   const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;

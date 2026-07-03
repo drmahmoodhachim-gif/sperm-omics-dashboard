@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { AnalysisWorkspace } from "@/components/analysis/AnalysisWorkspace";
-import { getAnalyzableStudies } from "@/lib/analysis/resolve-dataset";
+import { getAnalyzableStudies, getRawCapableStudies } from "@/lib/analysis/resolve-dataset";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,10 @@ export default async function AnalysisPage({
   searchParams: Promise<{ study?: string }>;
 }) {
   const sp = await searchParams;
-  const studies = await getAnalyzableStudies();
+  const [publishedStudies, rawStudies] = await Promise.all([
+    getAnalyzableStudies(),
+    getRawCapableStudies(),
+  ]);
 
   return (
     <DashboardLayout activePath="/analysis">
@@ -19,14 +22,16 @@ export default async function AnalysisPage({
         <header>
           <h1 className="font-serif text-3xl font-bold tracking-tight">Analysis Workspace</h1>
           <p className="mt-2 max-w-3xl text-muted-foreground">
-            Two modes: explore published findings from curated statistics, or connect to raw GEO /
-            PRIDE files and run your own differential expression on the original expression matrix.
+            Explore published findings from curated statistics, or pick any of{" "}
+            {rawStudies.length} GEO / ArrayExpress / PRIDE studies in the library to connect
+            raw quantification files and run your own differential expression.
           </p>
         </header>
 
         <Suspense fallback={<div className="h-96 animate-pulse rounded-xl bg-muted" />}>
           <AnalysisWorkspace
-            initialStudies={studies}
+            initialStudies={publishedStudies}
+            rawStudies={rawStudies}
             initialStudyId={sp.study}
           />
         </Suspense>

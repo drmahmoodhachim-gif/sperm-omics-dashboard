@@ -1,6 +1,8 @@
 import { gunzipSync } from "zlib";
 import type { MatrixSample, ParsedSeriesMatrix } from "./parse-series-matrix";
 
+import { accessionKind } from "./accession";
+
 const MAX_GENES = 4000;
 const MAX_SAMPLES = 120;
 
@@ -112,10 +114,4 @@ function splitDelimited(line: string, delim: string): string[] {
   return out;
 }
 
-export function accessionKind(acc: string): "geo" | "pride" | "arrayexpress" | "unknown" {
-  const u = acc.toUpperCase();
-  if (/^GSE\d+$/.test(u)) return "geo";
-  if (/^PXD\d+$/.test(u)) return "pride";
-  if (/^E-MTAB-\d+$/.test(u)) return "arrayexpress";
-  return "unknown";
-}
+export { accessionKind };

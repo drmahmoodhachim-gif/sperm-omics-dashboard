@@ -3,10 +3,7 @@ import { Badge } from "@/components/ui/Badge";
 import type { Dataset } from "@/lib/types";
 import { OMICS_LABELS, TISSUE_LABELS } from "@/lib/utils";
 import { ANALYZABLE_ACCESSIONS } from "@/lib/analysis/catalog";
-
-function supportsRawAnalysis(accession: string) {
-  return /^(GSE\d+|E-MTAB-\d+|PXD\d+)$/i.test(accession.trim());
-}
+import { resolveRawAccession } from "@/lib/raw-data/accession";
 
 export function DatasetsTable({ datasets }: { datasets: Dataset[] }) {
   if (datasets.length === 0) {
@@ -32,7 +29,9 @@ export function DatasetsTable({ datasets }: { datasets: Dataset[] }) {
           </tr>
         </thead>
         <tbody>
-          {datasets.map((d) => (
+          {datasets.map((d) => {
+            const rawAcc = resolveRawAccession(d);
+            return (
             <tr key={d.id} id={d.id} className="hover:bg-muted/40">
               <td>
                 {d.accession !== "—" && d.url ? (
@@ -74,9 +73,9 @@ export function DatasetsTable({ datasets }: { datasets: Dataset[] }) {
                       Analyze →
                     </Link>
                   )}
-                  {supportsRawAnalysis(d.accession) && (
+                  {rawAcc && (
                     <Link
-                      href={`/analysis?study=${encodeURIComponent(d.accession)}&mode=raw`}
+                      href={`/analysis?study=${encodeURIComponent(rawAcc)}&mode=raw`}
                       className="whitespace-nowrap rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
                     >
                       Raw data →
@@ -85,7 +84,8 @@ export function DatasetsTable({ datasets }: { datasets: Dataset[] }) {
                 </div>
               </td>
             </tr>
-          ))}
+          );
+          })}
         </tbody>
       </table>
     </div>

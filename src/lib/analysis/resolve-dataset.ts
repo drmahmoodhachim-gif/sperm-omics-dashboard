@@ -6,6 +6,11 @@ import {
   hasAnalysisData,
   resolveMeasurements,
 } from "./catalog";
+import {
+  resolveRawAccession,
+  repositoryForAccession,
+  sourceLabel,
+} from "@/lib/raw-data/accession";
 
 export async function getDatasetByIdAsync(idOrAccession: string): Promise<Dataset | null> {
   const seed =
@@ -45,4 +50,33 @@ export async function getAnalyzableStudies(): Promise<(Dataset & { variableCount
   return studies;
 }
 
-export { hasAnalysisData };
+export type RawCapableStudy = Dataset & {
+  variableCount: number;
+  rawAccession: string;
+};
+
+/** All library datasets with GEO / ArrayExpress / PRIDE accessions (~230+). */
+export async function getRawCapableStudies(): Promise<RawCapableStudy[]> {
+  const page = await getDatasetsPage({ limit: 2000 });
+  const seen = new Set<string>();
+  const studies: RawCapableStudy[] = [];
+
+  for (const dataset of page.rows) {
+    const rawAccession = resolveRawAccession(dataset);
+    if (!rawAccession || seen.has(rawAccession)) continue;
+    seen.add(rawAccession);
+
+    studies.push({
+      ...dataset,
+      accession: rawAccession,
+      repository: repositoryForAccession(rawAccession),
+      rawAccession,
+      variableCount: 0,
+      url: dataset.url ?? undefined,
+    });
+  }
+
+  return studies.sort((a, b) => a.rawAccession.localeCompare(b.rawAccession));
+}
+
+export { hasAnalysisData, sourceLabel as rawSourceLabel };
