@@ -4,6 +4,10 @@ import type { Dataset } from "@/lib/types";
 import { OMICS_LABELS, TISSUE_LABELS } from "@/lib/utils";
 import { ANALYZABLE_ACCESSIONS } from "@/lib/analysis/catalog";
 
+function isGeoAccession(accession: string) {
+  return /^GSE\d+$/i.test(accession.trim());
+}
+
 export function DatasetsTable({ datasets }: { datasets: Dataset[] }) {
   if (datasets.length === 0) {
     return (
@@ -61,14 +65,24 @@ export function DatasetsTable({ datasets }: { datasets: Dataset[] }) {
               <td className="capitalize">{d.species}</td>
               <td>{d.repository}</td>
               <td>
-                {ANALYZABLE_ACCESSIONS.includes(d.accession) && (
-                  <Link
-                    href={`/analysis?study=${encodeURIComponent(d.accession)}`}
-                    className="whitespace-nowrap rounded-lg bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20"
-                  >
-                    Analyze →
-                  </Link>
-                )}
+                <div className="flex flex-col gap-1">
+                  {ANALYZABLE_ACCESSIONS.includes(d.accession) && (
+                    <Link
+                      href={`/analysis?study=${encodeURIComponent(d.accession)}`}
+                      className="whitespace-nowrap rounded-lg bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20"
+                    >
+                      Analyze →
+                    </Link>
+                  )}
+                  {isGeoAccession(d.accession) && (
+                    <Link
+                      href={`/analysis?study=${encodeURIComponent(d.accession)}&mode=raw`}
+                      className="whitespace-nowrap rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                    >
+                      Raw data →
+                    </Link>
+                  )}
+                </div>
               </td>
             </tr>
           ))}

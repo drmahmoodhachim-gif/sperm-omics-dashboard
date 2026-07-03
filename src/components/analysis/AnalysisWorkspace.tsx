@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { BarChart3, CheckSquare, FlaskConical, Search, Square } from "lucide-react";
+import { BarChart3, CheckSquare, Database, FlaskConical, Search, Square } from "lucide-react";
+import { RawDataAnalysis } from "@/components/analysis/RawDataAnalysis";
 import { FigureRenderer } from "@/components/figures/FigureRenderer";
 import { FigureExport } from "@/components/figures/FigureExport";
 import { Badge } from "@/components/ui/Badge";
@@ -37,6 +38,12 @@ export function AnalysisWorkspace({
   const [selectedVars, setSelectedVars] = useState<Set<string>>(new Set());
   const [figureType, setFigureType] = useState<FigureType>("volcano");
   const [loadingStudy, setLoadingStudy] = useState(false);
+  const mode = searchParams.get("mode") === "raw" ? "raw" : "published";
+  const [geoInput, setGeoInput] = useState(
+    () => initialStudyId?.match(/^GSE/i) ? initialStudyId.toUpperCase() : "GSE281732"
+  );
+  const [rawStudy, setRawStudy] = useState<Dataset | null>(null);
+  const [loadingGeo, setLoadingGeo] = useState(false);
 
   const filteredStudies = useMemo(() => {
     const q = studyQuery.trim().toLowerCase();
@@ -137,6 +144,57 @@ export function AnalysisWorkspace({
     setSelectedVars(all);
   }
 
+  function setMode(next: "published" | "raw") {
+    startTransition(() => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (next === "raw") params.set("mode", "raw");
+      else params.delete("mode");
+      router.replace(`/analysis?${params.toString()}`);
+    });
+  }
+
+  const loadGeoStudy = useCallback(async (accession: string) => {
+    const acc = accession.trim().toUpperCase();
+    if (!/^GSE\d+$/.test(acc)) {
+      return;
+    }
+    setLoadingGeo(true);
+    try {
+      const res = await fetch(`/api/datasets/${encodeURIComponent(acc)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setRawStudy(data.dataset);
+      } else {
+        setRawStudy({
+          id: acc,
+          accession: acc,
+          title: `${acc} — GEO Series`,
+          repository: "GEO",
+          omicsType: "transcriptomics",
+          species: "human",
+          tissue: "spermatozoa",
+          url: `https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=${acc}`,
+        });
+      }
+      startTransition(() => {
+        const params = new URLSearchParams(searchParams.toString());
+        params.set("study", acc);
+        params.set("mode", "raw");
+        router.replace(`/analysis?${params.toString()}`);
+      });
+    } finally {
+      setLoadingGeo(false);
+    }
+  }, [router, searchParams]);
+
+  const studyParam = searchParams.get("study");
+
+  useEffect(() => {
+    if (mode === "raw" && studyParam && /^GSE\d+$/i.test(studyParam)) {
+      loadGeoStudy(studyParam);
+    }
+  }, [mode, studyParam, loadGeoStudy]);
+
   function selectSignificant() {
     const sig = measurements.filter((m) => {
       if (m.pValue == null || m.foldChange == null) return false;
@@ -145,6 +203,8 @@ export function AnalysisWorkspace({
     });
     setSelectedVars(new Set(sig.map((m) => m.featureName)));
   }
+
+  const rawTarget = rawStudy ?? (selectedStudy?.accession.match(/^GSE/i) ? selectedStudy : null);
 
   return (
     <div className="grid gap-6 xl:grid-cols-[320px_1fr]">
@@ -206,7 +266,69 @@ export function AnalysisWorkspace({
 
       {/* Variables + preview */}
       <div className="space-y-6">
-        {!selectedStudy ? (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setMode("published")}
+            className={cn(
+              "rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+              mode === "published"
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:text-foreground"
+            )}
+          >
+            Published findings
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("raw")}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+              mode === "raw"
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Database className="h-4 w-4" />
+            From raw data
+          </button>
+        </div>
+
+        {mode === "raw" ? (
+          <div className="space-y-6">
+            <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
+              <h3 className="text-sm font-semibold">GEO Series accession</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Enter any GSE accession from the library (e.g. GSE281732) to download the series
+                matrix and run your own differential expression.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <input
+                  type="text"
+                  value={geoInput}
+                  onChange={(e) => setGeoInput(e.target.value.toUpperCase())}
+                  placeholder="GSE281732"
+                  className="flex-1 rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm outline-none ring-ring focus:ring-2"
+                />
+                <button
+                  type="button"
+                  onClick={() => loadGeoStudy(geoInput)}
+                  disabled={loadingGeo}
+                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {loadingGeo ? "Loading…" : "Load study"}
+                </button>
+              </div>
+            </section>
+            {rawTarget ? (
+              <RawDataAnalysis study={rawTarget} />
+            ) : (
+              <div className="flex min-h-[200px] items-center justify-center rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+                Enter a GSE accession above to connect to NCBI raw files and run analysis.
+              </div>
+            )}
+          </div>
+        ) : !selectedStudy ? (
           <div className="flex min-h-[400px] flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/50 p-12 text-center">
             <BarChart3 className="h-12 w-12 text-muted-foreground/40" />
             <h3 className="mt-4 text-lg font-semibold">Select a study to begin</h3>

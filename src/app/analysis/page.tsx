@@ -19,8 +19,8 @@ export default async function AnalysisPage({
         <header>
           <h1 className="font-serif text-3xl font-bold tracking-tight">Analysis Workspace</h1>
           <p className="mt-2 max-w-3xl text-muted-foreground">
-            Select a study, choose variables (genes, proteins, or semen parameters), and
-            generate publication-ready figures from the curated comparison statistics.
+            Two modes: explore published findings from curated statistics, or connect to raw GEO /
+            PRIDE files and run your own differential expression on the original expression matrix.
           </p>
         </header>
 
