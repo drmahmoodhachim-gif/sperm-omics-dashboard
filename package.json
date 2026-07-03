@@ -9,7 +9,7 @@
     "lint": "next lint",
     "ingest": "tsx scripts/ingest-all.ts",
     "ingest:geo": "tsx scripts/ingest-geo.ts",
-    "sync:supabase": "tsx scripts/sync-supabase.ts",
+    "sync:supabase": "tsx scripts/push-via-rpc.ts",
     "db:verify": "tsx scripts/verify-db.ts"
   },
   "dependencies": {

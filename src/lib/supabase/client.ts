@@ -15,7 +15,7 @@ export function getSupabaseAnon(): SupabaseClient | null {
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
   if (!url || !key) return null;
   if (!anonClient) {
-    anonClient = createClient(url, key, clientOptions());
+    anonClient = createClient(url, key, clientOptions()) as SupabaseClient;
   }
   return anonClient;
 }
@@ -26,7 +26,7 @@ export function getSupabaseService(): SupabaseClient | null {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
   if (!serviceClient) {
-    serviceClient = createClient(url, key, clientOptions());
+    serviceClient = createClient(url, key, clientOptions()) as SupabaseClient;
   }
   return serviceClient;
 }
