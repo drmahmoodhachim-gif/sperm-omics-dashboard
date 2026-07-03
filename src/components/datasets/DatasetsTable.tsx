@@ -31,7 +31,7 @@ export function DatasetsTable({ datasets }: { datasets: Dataset[] }) {
           {datasets.map((d) => (
             <tr key={d.id} id={d.id} className="hover:bg-muted/40">
               <td>
-                {d.url ? (
+                {d.accession !== "—" && d.url ? (
                   <a
                     href={d.url}
                     target="_blank"
@@ -41,7 +41,9 @@ export function DatasetsTable({ datasets }: { datasets: Dataset[] }) {
                     {d.accession}
                   </a>
                 ) : (
-                  <span className="font-mono text-sm font-semibold">{d.accession}</span>
+                  <span className="font-mono text-sm text-muted-foreground">
+                    {d.accession}
+                  </span>
                 )}
               </td>
               <td className="max-w-md">

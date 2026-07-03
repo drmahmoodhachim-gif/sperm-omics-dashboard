@@ -1,6 +1,13 @@
 import type { Dataset, OmicsType, Publication, Species, Tissue } from "@/lib/types";
 import { getSupabaseAnon } from "./client";
 import { RPC, TABLES } from "./config";
+import {
+  sanitizeAccession,
+  sanitizeDatasetText,
+  isWordXmlGarbage,
+  stripWordXml,
+  extractAccession,
+} from "@/lib/utils/sanitize-text";
 
 const CACHE_MS = 60_000;
 let statsCache: { data: unknown; at: number } | null = null;
@@ -54,19 +61,40 @@ function mapPublication(row: DbPublication): Publication {
 }
 
 function mapDataset(row: DbDataset): Dataset {
+  const accessionRaw = row.accession ?? "";
+  const titleRaw = row.title ?? "";
+  const summary = sanitizeDatasetText(row.summary);
+
+  let title = sanitizeDatasetText(titleRaw) ?? titleRaw;
+  const accession = sanitizeAccession(accessionRaw, `${titleRaw} ${summary ?? ""}`);
+
+  // Bad docx parse: accession column sometimes holds title prose inside Word XML
+  if (accession === "—" && isWordXmlGarbage(accessionRaw)) {
+    const prose = stripWordXml(accessionRaw);
+    if (prose.length > 5 && !extractAccession(prose)) {
+      if (!title || isWordXmlGarbage(titleRaw) || title.length < prose.length) {
+        title = prose;
+      }
+    }
+  }
+
+  if (isWordXmlGarbage(title)) {
+    title = stripWordXml(titleRaw) || title;
+  }
+
   return {
     id: row.external_id ?? row.id,
     publicationId: row.publication_id ?? undefined,
-    accession: row.accession,
+    accession,
     repository: row.repository,
-    title: row.title,
+    title,
     omicsType: row.omics_type as OmicsType,
     species: (row.species ?? "human") as Species,
     tissue: (row.tissue ?? "other") as Tissue,
     sampleCount: row.sample_count ?? undefined,
-    platform: row.platform ?? undefined,
-    phenotype: row.phenotype ?? undefined,
-    summary: row.summary ?? undefined,
+    platform: sanitizeDatasetText(row.platform),
+    phenotype: sanitizeDatasetText(row.phenotype),
+    summary,
     url: row.url ?? undefined,
   };
 }

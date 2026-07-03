@@ -4,6 +4,7 @@ import {
   datasets as seedDatasets,
   publications as seedPublications,
 } from "@/lib/data/seed";
+import { sanitizeAccession, sanitizeDatasetText } from "@/lib/utils/sanitize-text";
 
 function slugId(prefix: string, accession: string): string {
   return `${prefix}-${accession.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
@@ -29,19 +30,23 @@ function toTissue(v?: string): Tissue {
 }
 
 function ingestToDataset(r: IngestRecord): Dataset {
+  const title = sanitizeDatasetText(r.title) ?? r.title;
+  const summary = sanitizeDatasetText(r.summary);
+  const accession = sanitizeAccession(r.accession, `${title} ${summary ?? ""}`);
+
   return {
-    id: slugId("ing", r.accession),
+    id: slugId("ing", accession),
     publicationId: r.pmid ? slugId("ing-pub", r.pmid) : undefined,
-    accession: r.accession,
+    accession,
     repository: r.repository,
-    title: r.title,
+    title,
     omicsType: toOmicsType(r.omicsType),
     species: toSpecies(r.species),
     tissue: toTissue(r.tissue),
     sampleCount: r.sampleCount,
-    platform: r.platform,
-    phenotype: r.phenotype,
-    summary: r.summary,
+    platform: sanitizeDatasetText(r.platform),
+    phenotype: sanitizeDatasetText(r.phenotype),
+    summary,
     url: r.url,
   };
 }

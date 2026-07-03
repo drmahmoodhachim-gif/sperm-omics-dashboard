@@ -1,4 +1,5 @@
 import type { IngestRecord } from "./ingest-types";
+import { extractAccession, extractCellText, stripWordXml } from "@/lib/utils/sanitize-text";
 
 /** Known accessions from SperMD Supplementary Table 1 (representative subset + generated catalog). */
 const SPERMD_KNOWN: Omit<IngestRecord, "source" | "ingestedAt">[] = [
@@ -69,35 +70,38 @@ function generateSperMDCatalog(now: string): IngestRecord[] {
 const FIGSHARE_DOCX =
   "https://ndownloader.figshare.com/files/48507555";
 
-/** Extract table-like rows from docx XML (Supplementary Table 1). */
+/** Extract table rows from docx XML — one string per table cell (not per text run). */
 function parseDocxTables(xml: string): string[][] {
   const rows: string[][] = [];
-  const rowMatches = xml.matchAll(/<w:tr[\s>][\s\S]*?<\/w:tr>/g);
-  for (const rowMatch of rowMatches) {
+  for (const rowMatch of xml.matchAll(/<w:tr[\s>][\s\S]*?<\/w:tr>/g)) {
     const cells: string[] = [];
-    const cellMatches = rowMatch[0].matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g);
-    for (const cell of cellMatches) {
-      cells.push(cell[1].replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim());
+    for (const cellMatch of rowMatch[0].matchAll(/<w:tc[\s>][\s\S]*?<\/w:tc>/g)) {
+      const text = extractCellText(cellMatch[0]);
+      if (text) cells.push(text);
     }
-    if (cells.length >= 3) rows.push(cells);
+    if (cells.length >= 2) rows.push(cells);
   }
   return rows;
 }
 
 function rowToRecord(cells: string[], now: string): IngestRecord | null {
-  const joined = cells.join(" ").toLowerCase();
+  const sanitized = cells.map((c) => stripWordXml(c)).filter(Boolean);
+  if (sanitized.length < 2) return null;
+
+  const joined = sanitized.join(" ").toLowerCase();
   if (joined.includes("accession") || joined.includes("dataset id")) return null;
 
-  const geoMatch = joined.match(/gse\d+/i);
-  const prideMatch = joined.match(/pxd\d+/i);
-  const emtabMatch = joined.match(/e-mtab-\d+/i);
   const accession =
-    geoMatch?.[0]?.toUpperCase() ??
-    prideMatch?.[0]?.toUpperCase() ??
-    emtabMatch?.[0]?.toUpperCase() ??
-    cells[0];
+    extractAccession(sanitized.join(" ")) ??
+    extractAccession(sanitized[0]) ??
+    (sanitized[0].length <= 32 && !sanitized[0].includes(" ") ? sanitized[0] : null);
 
-  if (!accession || accession.length < 3) return null;
+  if (!accession || accession.includes("<")) return null;
+
+  const title =
+    sanitized.find((c) => c !== accession && c.length > 8 && !extractAccession(c)) ??
+    sanitized[1] ??
+    `SperMD entry ${accession}`;
 
   const omicsType = joined.includes("proteom")
     ? "proteomics"
@@ -118,8 +122,8 @@ function rowToRecord(cells: string[], now: string): IngestRecord | null {
   return {
     accession,
     repository,
-    title: cells[1] ?? cells.find((c) => c.length > 20) ?? `SperMD entry ${accession}`,
-    summary: cells.slice(2).join("; "),
+    title,
+    summary: sanitized.slice(2).join("; "),
     omicsType,
     species: joined.includes("mouse") ? "mouse" : "human",
     tissue: joined.includes("epididym")
