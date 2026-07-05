@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DeveloperCredit } from "@/components/layout/DeveloperCredit";
+import { LogoutButton } from "@/components/layout/LogoutButton";
 
 const navItems = [
   { href: "/", label: "Overview", icon: Home },
@@ -60,6 +61,7 @@ export function Sidebar({ activePath }: { activePath: string }) {
           );
         })}
       </nav>
+      <LogoutButton />
       <div className="border-t border-border px-6 py-4">
         <DeveloperCredit compact />
       </div>
