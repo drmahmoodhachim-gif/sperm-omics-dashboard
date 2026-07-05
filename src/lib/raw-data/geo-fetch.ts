@@ -105,19 +105,10 @@ export async function listRawFiles(accession: string): Promise<RawFileLink[]> {
         seen.add(f.url);
       }
     }
-    if (matrixText) {
-      for (const f of await discoverGeoQuantFiles(matrixText, acc)) {
-        if (!seen.has(f.url) && f.source !== "sample") {
-          suppFiles.push(f);
-          seen.add(f.url);
-        }
-      }
-    } else {
-      for (const f of await discoverGeoQuantFiles("", acc)) {
-        if (!seen.has(f.url)) {
-          suppFiles.push(f);
-          seen.add(f.url);
-        }
+    for (const f of await discoverGeoQuantFiles(matrixText, acc)) {
+      if (!seen.has(f.url) && f.source !== "sample") {
+        suppFiles.push(f);
+        seen.add(f.url);
       }
     }
 

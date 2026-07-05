@@ -42,15 +42,25 @@ export async function fetchGeoFilelistSamples(
   const filelistUrl = geoSupplFileUrl(acc, "filelist.txt");
   if (!filelistUrl) return [];
 
-  try {
-    const res = await fetch(filelistUrl, { signal: AbortSignal.timeout(20_000) });
-    if (!res.ok) return [];
-    const text = await res.text();
-    const entries = parseGeoFilelistText(text);
-    return filelistEntriesToSupplements(entries);
-  } catch {
-    return [];
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(filelistUrl, { signal: AbortSignal.timeout(25_000) });
+      if (!res.ok) {
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+          continue;
+        }
+        return [];
+      }
+      const text = await res.text();
+      const entries = parseGeoFilelistText(text);
+      return filelistEntriesToSupplements(entries);
+    } catch {
+      if (attempt === 2) return [];
+      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+    }
   }
+  return [];
 }
 
 /** Marker URL — matrix fetch merges all filelist.txt per-sample quant files. */

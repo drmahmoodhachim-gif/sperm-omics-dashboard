@@ -11,6 +11,8 @@
     "ingest:geo": "tsx scripts/ingest-geo.ts",
     "sync:supabase": "tsx scripts/push-via-rpc.ts",
     "db:verify": "tsx scripts/verify-db.ts",
+    "audit:raw": "tsx scripts/audit-raw-studies.ts",
+    "audit:raw:full": "tsx scripts/audit-raw-studies.ts --full",
     "analyze:deseq2": "tsx scripts/deseq2/run-local.ts"
   },
   "dependencies": {

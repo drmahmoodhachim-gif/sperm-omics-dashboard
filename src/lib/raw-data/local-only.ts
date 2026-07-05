@@ -72,6 +72,9 @@ export function classifyRawFileAvailability(
   }
 
   const reasons: string[] = [];
+  if (files.length === 0) {
+    reasons.push("Could not list files from repository");
+  }
   for (const f of files) {
     if (isRawArchive(f.name) && !reasons.some((r) => r.includes("RAW.tar"))) {
       const hasFilelistMerge = files.some(
@@ -95,15 +98,12 @@ export function classifyRawFileAvailability(
     }
   }
 
-  const localOnly =
-    reasons.length > 0 ||
-    (files.length > 0 &&
-      files.every(
-        (f) =>
-          !f.analyzable &&
-          f.type !== "expression_matrix" &&
-          f.type !== "processed"
-      ));
+  const localOnly = true;
 
-  return { localOnly, reasons, repositoryUrl };
+  return {
+    localOnly,
+    reasons:
+      reasons.length > 0 ? reasons : ["No parseable quantification files for in-browser analysis"],
+    repositoryUrl,
+  };
 }

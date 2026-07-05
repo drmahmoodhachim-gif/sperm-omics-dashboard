@@ -85,6 +85,7 @@ export async function listGeoSupplDirectory(accession: string): Promise<GeoSuppl
     const html = await res.text();
     const acc = accession.toUpperCase();
     const names = new Set<string>();
+    const hasFilelist = /filelist\.txt/i.test(html);
 
     for (const m of html.matchAll(/href="([^"?]+\.(?:txt|tsv|csv|gz))"/gi)) {
       const name = m[1].split("/").pop() ?? m[1];
@@ -92,13 +93,33 @@ export async function listGeoSupplDirectory(accession: string): Promise<GeoSuppl
       names.add(name);
     }
 
-    return [...names]
+    const out = [...names]
       .map((name) => {
         const url = geoSupplFileUrl(acc, name);
         return url ? fileEntry(url, "ftp") : null;
       })
       .filter((f): f is GeoSupplementaryFile => f !== null && f.score >= MIN_SCORE)
       .sort((a, b) => b.score - a.score);
+
+    if (hasFilelist && !out.some((f) => f.url.includes("filelist"))) {
+      out.push({
+        name: "filelist.txt",
+        url: geoSupplFileUrl(acc, "filelist.txt") ?? "",
+        score: 5,
+        source: "ftp",
+        description: "GEO filelist — catalog of per-sample files (often inside RAW.tar)",
+      });
+      out.unshift({
+        name: `${acc}_merged_per_sample_quant`,
+        url: geoFilelistMergeUrl(acc),
+        score: 27,
+        source: "ftp",
+        description:
+          "Merge per-sample quant files listed in GEO filelist.txt (inside RAW.tar)",
+      });
+    }
+
+    return out;
   } catch {
     return [];
   }
@@ -151,6 +172,25 @@ export async function discoverGeoQuantFiles(
         source: "sample",
         description: `Per-sample quant from filelist.txt (${s.sampleId})`,
       });
+    }
+  } else {
+    const dirUrl = geoSupplDirUrl(accession);
+    if (dirUrl) {
+      try {
+        const res = await fetch(dirUrl, { signal: AbortSignal.timeout(15_000) });
+        if (res.ok && /filelist\.txt/i.test(await res.text())) {
+          add({
+            name: `${accession.toUpperCase()}_merged_per_sample_quant`,
+            url: geoFilelistMergeUrl(accession),
+            score: 26,
+            source: "ftp",
+            description:
+              "Merge per-sample quant files from GEO filelist.txt (detected on FTP; loads on matrix fetch)",
+          });
+        }
+      } catch {
+        // optional
+      }
     }
   }
 
