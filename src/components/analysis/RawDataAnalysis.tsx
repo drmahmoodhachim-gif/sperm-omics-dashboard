@@ -17,8 +17,13 @@ import {
 import { FigureRenderer } from "@/components/figures/FigureRenderer";
 import { FigureExport } from "@/components/figures/FigureExport";
 import { LocalOnlyGuidance } from "@/components/analysis/LocalOnlyGuidance";
+import { ResearchPlanNextStudy } from "@/components/analysis/ResearchPlanBanner";
 import { Badge } from "@/components/ui/Badge";
 import { isLocalOnlyError } from "@/lib/raw-data/local-only";
+import {
+  buildAutoGroups,
+  groupsFromAssignments,
+} from "@/lib/research/auto-groups";
 import type { Dataset, Figure } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -78,6 +83,7 @@ interface AnalysisResult {
 type SampleGroup = "A" | "B" | null;
 type Step = 1 | 2 | 3 | 4;
 type ResultTab = "volcano" | "pca" | "heatmap" | "table";
+type AutoStage = "idle" | "running" | "done" | "failed";
 
 const STEPS = [
   { n: 1, label: "Connect", icon: Database },
@@ -86,14 +92,23 @@ const STEPS = [
   { n: 4, label: "Results", icon: BarChart3 },
 ] as const;
 
-function suggestGroup(char: string): SampleGroup {
-  const c = char.toLowerCase();
-  if (/control|fertile|normal|healthy|wild|wt|norm/.test(c)) return "A";
-  if (/infertile|case|disease|patient|azoosperm|astheno|oligo|mut/.test(c)) return "B";
-  return null;
-}
-
-export function RawDataAnalysis({ study }: { study: Dataset }) {
+export function RawDataAnalysis({
+  study,
+  autoRun = false,
+  geneHints,
+  studyQueue = [],
+  activeStudyIndex = 0,
+  onAutoComplete,
+  onAdvanceStudy,
+}: {
+  study: Dataset;
+  autoRun?: boolean;
+  geneHints?: string[];
+  studyQueue?: string[];
+  activeStudyIndex?: number;
+  onAutoComplete?: (accession: string, success: boolean) => void;
+  onAdvanceStudy?: (accession: string) => void;
+}) {
   const accession = study.accession.toUpperCase();
   const [step, setStep] = useState<Step>(1);
   const [files, setFiles] = useState<RawFile[]>([]);
@@ -109,8 +124,10 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [resultTab, setResultTab] = useState<ResultTab>("volcano");
-  const [geneFilter, setGeneFilter] = useState("");
+  const [geneFilter, setGeneFilter] = useState(() => geneHints?.join(", ") ?? "");
   const [localOnly, setLocalOnly] = useState(false);
+  const [autoStage, setAutoStage] = useState<AutoStage>("idle");
+  const [autoMessage, setAutoMessage] = useState<string | null>(null);
   const [localOnlyReasons, setLocalOnlyReasons] = useState<string[]>([]);
   const [repositoryUrl, setRepositoryUrl] = useState<string | undefined>(
     study.url
@@ -156,12 +173,10 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load matrix");
       setMatrix(data);
-      const auto: Record<string, SampleGroup> = {};
-      for (const s of data.samples as MatrixSample[]) {
-        auto[s.id] = suggestGroup(s.characteristics.join(" ") + " " + s.title);
-      }
+      const auto = buildAutoGroups(data.samples as MatrixSample[]);
       setAssignments(auto);
       setStep(3);
+      return data as MatrixPreview;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load matrix");
     } finally {
@@ -169,12 +184,107 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
     }
   }, [accession, selectedFileUrl]);
 
+  const runAutoPipeline = useCallback(async () => {
+    if (autoStage === "running" || autoStage === "done") return;
+    setAutoStage("running");
+    setAutoMessage("Connecting to repository and listing source files…");
+    setError(null);
+
+    try {
+      const filesRes = await fetch(`/api/raw/${encodeURIComponent(accession)}`);
+      const filesData = await filesRes.json();
+      if (!filesRes.ok) throw new Error(filesData.error ?? "Failed to list files");
+
+      setFiles(filesData.files ?? []);
+      setMeta({ source: filesData.source, kind: filesData.kind });
+      setLocalOnly(Boolean(filesData.localOnly));
+      setLocalOnlyReasons(filesData.localOnlyReasons ?? []);
+      if (filesData.repositoryUrl) setRepositoryUrl(filesData.repositoryUrl);
+
+      const analyzable = ((filesData.files as RawFile[]) ?? []).filter((f) => f.analyzable);
+      if (filesData.localOnly || analyzable.length === 0) {
+        setAutoStage("failed");
+        setAutoMessage("This study needs local download — see guidance below.");
+        onAutoComplete?.(accession, false);
+        return;
+      }
+
+      const fileUrl = analyzable[0].url;
+      setSelectedFileUrl(fileUrl);
+      setStep(2);
+      setAutoMessage("Loading expression matrix from source…");
+
+      const qs = `?fileUrl=${encodeURIComponent(fileUrl)}`;
+      const matrixRes = await fetch(`/api/raw/${encodeURIComponent(accession)}/matrix${qs}`);
+      const matrixData = await matrixRes.json();
+      if (!matrixRes.ok) throw new Error(matrixData.error ?? "Failed to load matrix");
+
+      setMatrix(matrixData);
+      const auto = buildAutoGroups(matrixData.samples as MatrixSample[]);
+      setAssignments(auto);
+      setStep(3);
+
+      const { groupA: gA, groupB: gB } = groupsFromAssignments(auto);
+      if (gA.length < 2 || gB.length < 2) {
+        setAutoStage("failed");
+        setAutoMessage("Could not auto-assign comparison groups (need ≥2 samples per group).");
+        onAutoComplete?.(accession, false);
+        return;
+      }
+
+      setAutoMessage("Running differential expression (Welch + BH-FDR)…");
+      const genes = geneFilter.split(/[,\s]+/).map((g) => g.trim()).filter(Boolean);
+      const analyzeRes = await fetch(`/api/raw/${encodeURIComponent(accession)}/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          groupA: gA,
+          groupB: gB,
+          groupALabel,
+          groupBLabel,
+          genes: genes.length ? genes : undefined,
+          fileUrl,
+        }),
+      });
+      const analyzeData = await analyzeRes.json();
+      if (!analyzeRes.ok) throw new Error(analyzeData.error ?? "Analysis failed");
+
+      setResult(analyzeData);
+      setStep(4);
+      setResultTab("volcano");
+      setAutoStage("done");
+      setAutoMessage(
+        `Complete — ${analyzeData.significantGenes} significant features (FDR) from ${accession}.`
+      );
+      onAutoComplete?.(accession, true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Auto-analysis failed";
+      setError(msg);
+      setAutoStage("failed");
+      setAutoMessage(msg);
+      onAutoComplete?.(accession, false);
+    }
+  }, [accession, autoStage, geneFilter, groupALabel, groupBLabel, onAutoComplete]);
+
   useEffect(() => {
     setMatrix(null);
     setResult(null);
     setAssignments({});
-    loadFiles();
-  }, [loadFiles]);
+    setAutoStage("idle");
+    setAutoMessage(null);
+    setError(null);
+    if (!autoRun) {
+      loadFiles();
+    }
+  }, [accession, autoRun, loadFiles]);
+
+  useEffect(() => {
+    if (!autoRun || autoStage !== "idle") return;
+    const t = window.setTimeout(() => {
+      void runAutoPipeline();
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [autoRun, autoStage, runAutoPipeline]);
 
   const groupA = useMemo(
     () => Object.entries(assignments).filter(([, g]) => g === "A").map(([id]) => id),
@@ -185,21 +295,27 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
     [assignments]
   );
 
-  async function runAnalysis() {
+  async function runAnalysis(override?: {
+    groupA?: string[];
+    groupB?: string[];
+    fileUrl?: string;
+  }) {
     setAnalyzing(true);
     setError(null);
     try {
       const genes = geneFilter.split(/[,\s]+/).map((g) => g.trim()).filter(Boolean);
+      const useA = override?.groupA ?? groupA;
+      const useB = override?.groupB ?? groupB;
       const res = await fetch(`/api/raw/${encodeURIComponent(accession)}/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          groupA,
-          groupB,
+          groupA: useA,
+          groupB: useB,
           groupALabel,
           groupBLabel,
           genes: genes.length ? genes : undefined,
-          fileUrl: selectedFileUrl || undefined,
+          fileUrl: override?.fileUrl ?? (selectedFileUrl || undefined),
         }),
       });
       const data = await res.json();
@@ -207,8 +323,10 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
       setResult(data);
       setStep(4);
       setResultTab("volcano");
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Analysis failed");
+      return false;
     } finally {
       setAnalyzing(false);
     }
@@ -283,6 +401,19 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
             </li>
           ))}
         </ol>
+        {autoRun && autoMessage && (
+          <p
+            className={cn(
+              "mt-4 flex items-center gap-2 rounded-lg px-3 py-2 text-sm",
+              autoStage === "running" && "bg-primary/10 text-primary",
+              autoStage === "done" && "bg-emerald-500/10 text-emerald-700",
+              autoStage === "failed" && "bg-amber-500/10 text-amber-800"
+            )}
+          >
+            {autoStage === "running" && <Loader2 className="h-4 w-4 animate-spin" />}
+            {autoMessage}
+          </p>
+        )}
       </div>
 
       {/* Step 1: Files */}
@@ -473,7 +604,7 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
 
           <button
             type="button"
-            onClick={runAnalysis}
+            onClick={() => void runAnalysis()}
             disabled={analyzing || groupA.length < 2 || groupB.length < 2}
             className="mt-4 inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-primary to-teal-600 px-6 py-3 text-sm font-semibold text-white shadow-lg hover:opacity-95 disabled:opacity-50"
           >
@@ -582,6 +713,14 @@ export function RawDataAnalysis({ study }: { study: Dataset }) {
               figureId="raw-analysis"
               figureTitle={volcanoFigure.title}
               className="mt-4"
+            />
+          )}
+
+          {autoStage === "done" && studyQueue.length > 0 && onAdvanceStudy && (
+            <ResearchPlanNextStudy
+              studyQueue={studyQueue}
+              activeIndex={activeStudyIndex}
+              onNext={onAdvanceStudy}
             />
           )}
         </section>

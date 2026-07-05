@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function AnalysisPage({
   searchParams,
 }: {
-  searchParams: Promise<{ study?: string }>;
+  searchParams: Promise<{ study?: string; mode?: string; auto?: string; from?: string; studies?: string; q?: string }>;
 }) {
   const sp = await searchParams;
   const [publishedStudies, rawStudies] = await Promise.all([

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter, useSearchParams } from "next/navigation";
 import { BarChart3, CheckSquare, Database, FlaskConical, Search, Square } from "lucide-react";
 import { RawDataAnalysis } from "@/components/analysis/RawDataAnalysis";
+import { ResearchPlanBanner } from "@/components/analysis/ResearchPlanBanner";
 import { FigureRenderer } from "@/components/figures/FigureRenderer";
 import { FigureExport } from "@/components/figures/FigureExport";
 import { Badge } from "@/components/ui/Badge";
@@ -18,6 +19,11 @@ import {
   sourceLabel,
 } from "@/lib/raw-data/accession";
 import type { Dataset, FigureType, Measurement } from "@/lib/types";
+import {
+  extractGeneHints,
+  loadStoredResearchPlan,
+} from "@/lib/research/analysis-url";
+import type { ResearchPlan } from "@/lib/research/types";
 import { FIGURE_LABELS, OMICS_LABELS, TISSUE_LABELS, cn } from "@/lib/utils";
 
 interface StudyWithCount extends Dataset {
@@ -50,6 +56,31 @@ export function AnalysisWorkspace({
   const [figureType, setFigureType] = useState<FigureType>("volcano");
   const [loadingStudy, setLoadingStudy] = useState(false);
   const mode = searchParams.get("mode") === "raw" ? "raw" : "published";
+  const fromResearch = searchParams.get("from") === "research";
+  const autoRun = searchParams.get("auto") === "1";
+  const researchQuestion = searchParams.get("q") ?? "";
+  const studyQueue = useMemo(() => {
+    const raw = searchParams.get("studies");
+    if (raw) return raw.split(",").map((s) => s.trim()).filter(Boolean);
+    const single = searchParams.get("study");
+    return single ? [single] : [];
+  }, [searchParams]);
+  const activeStudyIndex = (() => {
+    const idx = studyQueue.findIndex(
+      (s) => s.toUpperCase() === (searchParams.get("study") ?? "").toUpperCase()
+    );
+    return idx >= 0 ? idx : 0;
+  })();
+  const [storedPlan, setStoredPlan] = useState<ResearchPlan | null>(null);
+  const [autoRunning, setAutoRunning] = useState(autoRun);
+  const geneHints = useMemo(
+    () => extractGeneHints(researchQuestion || storedPlan?.question || ""),
+    [researchQuestion, storedPlan?.question]
+  );
+
+  useEffect(() => {
+    setStoredPlan(loadStoredResearchPlan());
+  }, []);
   const [accessionInput, setAccessionInput] = useState(() => {
     const id = initialStudyId?.toUpperCase() ?? "";
     if (isRawAnalyzableAccession(id)) return normalizeRawAccession(id) ?? id;
@@ -76,7 +107,7 @@ export function AnalysisWorkspace({
     );
   }, [panelStudies, studyQuery]);
 
-  const loadStudy = useCallback(async (study: StudyWithCount) => {
+  const loadStudy = useCallback(async (study: StudyWithCount, opts?: { autoSignificant?: boolean }) => {
     setLoadingStudy(true);
     try {
       const res = await fetch(`/api/datasets/${encodeURIComponent(study.accession)}`);
@@ -87,7 +118,17 @@ export function AnalysisWorkspace({
       const types = suggestFigureTypes(study.omicsType, vars);
       const defaultType = types[0] as FigureType;
       setFigureType(defaultType);
-      setSelectedVars(new Set(vars.map((m) => m.featureName)));
+
+      if (opts?.autoSignificant) {
+        const sig = vars.filter((m) => {
+          if (m.pValue == null || m.foldChange == null) return false;
+          const log2FC = Math.log2(Math.max(m.foldChange, 0.01));
+          return (m.adjPValue ?? m.pValue) < 0.05 && Math.abs(log2FC) >= 0.58;
+        });
+        setSelectedVars(new Set((sig.length ? sig : vars).map((m) => m.featureName)));
+      } else {
+        setSelectedVars(new Set(vars.map((m) => m.featureName)));
+      }
 
       startTransition(() => {
         const params = new URLSearchParams(searchParams.toString());
@@ -97,17 +138,45 @@ export function AnalysisWorkspace({
       });
     } finally {
       setLoadingStudy(false);
+      if (opts?.autoSignificant) setAutoRunning(false);
     }
   }, [router, searchParams]);
 
   useEffect(() => {
-    if (initialStudyId && !selectedStudy) {
+    if (initialStudyId && !selectedStudy && mode === "published") {
       const match = studies.find(
         (s) => s.id === initialStudyId || s.accession === initialStudyId
       );
-      if (match) loadStudy(match);
+      if (match) loadStudy(match, { autoSignificant: autoRun && fromResearch });
     }
-  }, [initialStudyId, selectedStudy, studies, loadStudy]);
+  }, [initialStudyId, selectedStudy, studies, loadStudy, mode, autoRun, fromResearch]);
+
+  const navigateResearchStudy = useCallback(
+    (accession: string, keepAuto = true) => {
+      setAutoRunning(keepAuto);
+      startTransition(() => {
+        const params = new URLSearchParams(searchParams.toString());
+        params.set("study", accession);
+        params.set("from", "research");
+        if (keepAuto) params.set("auto", "1");
+        else params.delete("auto");
+        params.set("mode", "raw");
+        router.replace(`/analysis?${params.toString()}`);
+      });
+    },
+    [router, searchParams]
+  );
+
+  const handleRawAutoComplete = useCallback(
+    (_acc: string, success: boolean) => {
+      setAutoRunning(false);
+      if (success && studyQueue.length > activeStudyIndex + 1) {
+        const next = studyQueue[activeStudyIndex + 1];
+        window.setTimeout(() => navigateResearchStudy(next, true), 2000);
+      }
+    },
+    [studyQueue, activeStudyIndex, navigateResearchStudy]
+  );
 
   useEffect(() => {
     const fromUrl = searchParams.get("vars");
@@ -253,6 +322,19 @@ export function AnalysisWorkspace({
   const activeRawAccession = rawTarget?.accession ?? accessionInput;
 
   return (
+    <div className="space-y-6">
+      {fromResearch && (
+        <ResearchPlanBanner
+          plan={storedPlan}
+          question={researchQuestion || storedPlan?.question}
+          studyQueue={studyQueue}
+          activeAccession={studyParam ?? activeRawAccession}
+          activeIndex={activeStudyIndex >= 0 ? activeStudyIndex : 0}
+          autoRunning={autoRunning}
+          onSelectStudy={(acc) => navigateResearchStudy(acc, false)}
+        />
+      )}
+
     <div className="grid gap-6 xl:grid-cols-[320px_1fr]">
       {/* Study picker */}
       <section className="space-y-4">
@@ -384,7 +466,15 @@ export function AnalysisWorkspace({
               </div>
             </section>
             {rawTarget ? (
-              <RawDataAnalysis study={rawTarget} />
+              <RawDataAnalysis
+                study={rawTarget}
+                autoRun={autoRun && fromResearch}
+                geneHints={geneHints}
+                studyQueue={studyQueue}
+                activeStudyIndex={activeStudyIndex >= 0 ? activeStudyIndex : 0}
+                onAutoComplete={fromResearch ? handleRawAutoComplete : undefined}
+                onAdvanceStudy={(acc) => navigateResearchStudy(acc, true)}
+              />
             ) : (
               <div className="flex min-h-[200px] items-center justify-center rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
                 Select a study from the left panel ({rawStudyList.length} available) or enter an
@@ -554,6 +644,7 @@ export function AnalysisWorkspace({
           </>
         )}
       </div>
+    </div>
     </div>
   );
 }
