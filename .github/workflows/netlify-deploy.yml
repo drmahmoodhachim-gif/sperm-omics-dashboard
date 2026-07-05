@@ -23,11 +23,17 @@ jobs:
       - run: npm ci
 
       # Single command ensures CSS/JS static assets upload with the deploy
-      - name: Build and deploy to Netlify
-        run: npx netlify-cli deploy --prod --build
+      - name: Build on Netlify (pulls site env vars)
+        run: npx netlify-cli build
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
           AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
           AUTH_USERNAME: ${{ secrets.AUTH_USERNAME }}
           AUTH_PASSWORD: ${{ secrets.AUTH_PASSWORD }}
+
+      - name: Deploy to Netlify production
+        run: npx netlify-cli deploy --prod --no-build
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
