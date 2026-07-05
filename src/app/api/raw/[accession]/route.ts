@@ -66,6 +66,9 @@ function studyRepositoryUrl(acc: string): string | undefined {
     return `https://www.ebi.ac.uk/pride/archive/projects/${acc}`;
   }
   if (/^E-MTAB/i.test(acc)) {
+    return `https://www.ebi.ac.uk/biostudies/arrayexpress/studies/${acc}`;
+  }
+  if (/^E-MEXP/i.test(acc)) {
     return `https://www.ebi.ac.uk/biostudies/studies/${acc}`;
   }
   return undefined;

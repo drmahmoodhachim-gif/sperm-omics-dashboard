@@ -2,7 +2,7 @@ import type { Dataset } from "@/lib/types";
 import { extractAccession } from "@/lib/utils/sanitize-text";
 
 /** Accessions that can connect to GEO / ArrayExpress / PRIDE raw files. */
-export const RAW_ACCESSION_RE = /^(GSE\d+|E-MTAB-\d+|PXD\d+)$/i;
+export const RAW_ACCESSION_RE = /^(GSE\d+|E-MTAB-\d+|E-MEXP-\d+|PXD\d+)$/i;
 
 export type RawRepositoryKind = "geo" | "arrayexpress" | "pride";
 
@@ -25,6 +25,7 @@ export function accessionKind(acc: string): RawRepositoryKind | "unknown" {
   if (/^GSE\d+$/.test(n)) return "geo";
   if (/^PXD\d+$/.test(n)) return "pride";
   if (/^E-MTAB-\d+$/.test(n)) return "arrayexpress";
+  if (/^E-MEXP-\d+$/.test(n)) return "arrayexpress";
   return "unknown";
 }
 

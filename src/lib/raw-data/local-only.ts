@@ -12,7 +12,7 @@ export interface LocalOnlyAssessment {
 }
 
 const LOCAL_ONLY_ERROR =
-  /RAW\.tar|No parseable quantification|Excel|scRNA|only provide raw|local analysis|local DESeq2/i;
+  /RAW\.tar|No parseable quantification|Excel|scRNA|only provide raw|local analysis|local DESeq2|ArrayExpress download failed|only raw IDAT|IDAT raw/i;
 
 export function isLocalOnlyError(message: string | null | undefined): boolean {
   if (!message) return false;
@@ -47,6 +47,10 @@ function isSingleCellObject(name: string): boolean {
   );
 }
 
+function isIdatRaw(name: string): boolean {
+  return /\.idat$/i.test(name);
+}
+
 export function classifyRawFileAvailability(
   files: RawFileLike[],
   accession?: string
@@ -58,7 +62,9 @@ export function classifyRawFileAvailability(
     files.find((f) => f.type === "other")?.url ??
     (accession?.startsWith("GSE")
       ? `https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=${accession}`
-      : undefined);
+      : accession?.match(/^E-MTAB|^E-MEXP/i)
+        ? `https://www.ebi.ac.uk/biostudies/arrayexpress/studies/${accession}`
+        : undefined);
 
   if (analyzable.length > 0) {
     return { localOnly: false, reasons: [], repositoryUrl };
@@ -77,6 +83,9 @@ export function classifyRawFileAvailability(
     }
     if (isSingleCellObject(f.name) && !reasons.some((r) => r.includes("Single-cell"))) {
       reasons.push("Single-cell object files (Seurat / h5ad / RDS)");
+    }
+    if (isIdatRaw(f.name) && !reasons.some((r) => r.includes("IDAT"))) {
+      reasons.push("Illumina IDAT raw files (.idat) — needs local preprocessing");
     }
   }
 
