@@ -35,6 +35,9 @@ Set in **Site settings → Environment variables**:
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Already set |
 | `NEXT_PUBLIC_SUPABASE_SCHEMA` | Yes | `sperm_omics` |
 | `CRON_SECRET` | Yes | For `/api/cron/ingest` |
+| `AUTH_SECRET` | Yes | Session signing (32+ char random hex) |
+| `AUTH_USERNAME` | Yes | Approved login email |
+| `AUTH_PASSWORD` | Yes | Approved login password |
 | `SUPABASE_SERVICE_ROLE_KEY` | Optional | Server-side ingest sync — get from Supabase Dashboard → Settings → API → **service_role** (secret) |
 | `NCBI_API_KEY` | Optional | Faster GEO/PubMed ingest |
 
