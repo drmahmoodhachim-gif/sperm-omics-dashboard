@@ -8,6 +8,8 @@ export interface MatrixSampleLike {
 
 export function suggestGroup(char: string): SampleGroup {
   const c = char.toLowerCase();
+  if (/esc|ipsc|pluripot|h1esc|normal-ipsc/i.test(c)) return "A";
+  if (/pgclc|melc|germline|meiosis|d4pgclc/i.test(c)) return "B";
   if (/control|fertile|normal|healthy|wild|wt|norm|reference/.test(c)) return "A";
   if (/infertile|case|disease|patient|azoosperm|astheno|oligo|mut|patholog/.test(c)) return "B";
   return null;

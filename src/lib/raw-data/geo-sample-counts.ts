@@ -84,6 +84,27 @@ async function downloadSampleCounts(url: string, name: string): Promise<Map<stri
   return map.size >= 10 ? map : null;
 }
 
+function labelFromSampleFilename(name: string): string {
+  return name.replace(/^GSM\d+_/i, "").replace(/\.(txt|tsv|csv)(\.gz)?$/i, "");
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let i = 0;
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++;
+      results[idx] = await fn(items[idx]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
+  return results;
+}
+
 export async function aggregateSampleCountFiles(
   samples: SampleSupplement[],
   accession: string,
@@ -92,14 +113,21 @@ export async function aggregateSampleCountFiles(
   const loaded: MatrixSample[] = [];
   const geneSets = new Map<string, Map<string, number>>();
 
-  for (const s of samples) {
-    const counts = await downloadSampleCounts(s.url, s.name);
+  const downloads = await mapWithConcurrency(samples, 6, async (s) => ({
+    s,
+    counts: await downloadSampleCounts(s.url, s.name),
+  }));
+
+  for (const { s, counts } of downloads) {
     if (!counts) continue;
     const meta = metaSamples?.find((m) => m.id === s.sampleId);
+    const fileLabel = labelFromSampleFilename(s.name);
     loaded.push({
       id: s.sampleId,
-      title: meta?.title ?? s.sampleId,
-      characteristics: meta?.characteristics ?? [],
+      title: meta?.title ?? (fileLabel || s.sampleId),
+      characteristics: meta?.characteristics?.length
+        ? meta.characteristics
+        : [fileLabel],
     });
     geneSets.set(s.sampleId, counts);
   }

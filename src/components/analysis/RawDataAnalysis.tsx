@@ -152,7 +152,10 @@ export function RawDataAnalysis({
       setLocalOnly(Boolean(data.localOnly));
       setLocalOnlyReasons(data.localOnlyReasons ?? []);
       if (data.repositoryUrl) setRepositoryUrl(data.repositoryUrl);
-      const first = (data.files as RawFile[]).find((f) => f.analyzable);
+      const list = (data.files as RawFile[]) ?? [];
+      const first =
+        list.find((f) => f.analyzable && /merged_per_sample|filelist/i.test(f.name)) ??
+        list.find((f) => f.analyzable);
       if (first) setSelectedFileUrl(first.url);
       setStep(1);
     } catch (e) {
@@ -209,7 +212,9 @@ export function RawDataAnalysis({
         return;
       }
 
-      const fileUrl = analyzable[0].url;
+      const picked =
+        analyzable.find((f) => /merged_per_sample|filelist/i.test(f.name)) ?? analyzable[0];
+      const fileUrl = picked.url;
       setSelectedFileUrl(fileUrl);
       setStep(2);
       setAutoMessage("Loading expression matrix from source…");

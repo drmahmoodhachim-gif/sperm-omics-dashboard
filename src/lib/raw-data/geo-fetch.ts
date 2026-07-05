@@ -10,6 +10,11 @@ import {
   rankSupplementaryFiles,
   seriesMatrixHasExpressionTable,
 } from "@/lib/raw-data/geo-supplementary";
+import {
+  accessionFromFilelistMergeUrl,
+  fetchGeoFilelistSamples,
+  isGeoFilelistMergeUrl,
+} from "@/lib/raw-data/geo-filelist";
 import { toHttps } from "@/lib/raw-data/geo-utils";
 import {
   aggregateSampleCountFiles,
@@ -103,6 +108,13 @@ export async function listRawFiles(accession: string): Promise<RawFileLink[]> {
     if (matrixText) {
       for (const f of await discoverGeoQuantFiles(matrixText, acc)) {
         if (!seen.has(f.url) && f.source !== "sample") {
+          suppFiles.push(f);
+          seen.add(f.url);
+        }
+      }
+    } else {
+      for (const f of await discoverGeoQuantFiles("", acc)) {
+        if (!seen.has(f.url)) {
           suppFiles.push(f);
           seen.add(f.url);
         }
@@ -214,6 +226,30 @@ export async function fetchGeoSeriesMatrix(
   }
 
   if (fileUrl) {
+    if (isGeoFilelistMergeUrl(fileUrl)) {
+      const mergeAcc = accessionFromFilelistMergeUrl(fileUrl) ?? acc;
+      let metaSamples: ReturnType<typeof parseSeriesMatrixMetadata>["samples"] | undefined;
+      const matrixUrl = geoSeriesMatrixUrl(acc);
+      if (matrixUrl) {
+        try {
+          const metaRes = await fetch(matrixUrl, { signal: AbortSignal.timeout(30_000) });
+          if (metaRes.ok) {
+            const t = gunzipSync(Buffer.from(await metaRes.arrayBuffer())).toString("utf-8");
+            metaSamples = parseSeriesMatrixMetadata(t, acc).samples;
+          }
+        } catch {
+          // optional metadata
+        }
+      }
+      const filelistSamples = await fetchGeoFilelistSamples(mergeAcc);
+      if (filelistSamples.length < 2) {
+        throw new Error("filelist.txt has fewer than 2 parseable per-sample quant files");
+      }
+      const parsed = await aggregateSampleCountFiles(filelistSamples, mergeAcc, metaSamples);
+      matrixCache.set(cacheKey, { at: Date.now(), data: parsed });
+      return parsed;
+    }
+
     const url = toHttps(fileUrl);
     const matrixUrl = geoSeriesMatrixUrl(acc);
 
@@ -303,6 +339,19 @@ export async function fetchGeoSeriesMatrix(
     } catch (err) {
       errors.push(
         `Per-sample merge: ${err instanceof Error ? err.message : "failed"}`
+      );
+    }
+  }
+
+  const filelistSamples = await fetchGeoFilelistSamples(acc);
+  if (filelistSamples.length >= 2) {
+    try {
+      const parsed = await aggregateSampleCountFiles(filelistSamples, acc, meta.samples);
+      matrixCache.set(cacheKey, { at: Date.now(), data: parsed });
+      return parsed;
+    } catch (err) {
+      errors.push(
+        `filelist.txt merge: ${err instanceof Error ? err.message : "failed"}`
       );
     }
   }

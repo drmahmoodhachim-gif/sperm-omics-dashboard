@@ -21,6 +21,7 @@ export function isLocalOnlyError(message: string | null | undefined): boolean {
 
 function isRawArchive(name: string): boolean {
   const lower = name.toLowerCase();
+  if (/filelist\.txt$/i.test(lower)) return false;
   return (
     /_raw\.tar(\.gz)?$/.test(lower) ||
     (lower.endsWith(".tar") && lower.includes("raw")) ||
@@ -73,7 +74,12 @@ export function classifyRawFileAvailability(
   const reasons: string[] = [];
   for (const f of files) {
     if (isRawArchive(f.name) && !reasons.some((r) => r.includes("RAW.tar"))) {
-      reasons.push("RAW.tar only (raw FASTQ inside the archive)");
+      const hasFilelistMerge = files.some(
+        (x) => x.analyzable && /merged_per_sample|filelist/i.test(x.name)
+      );
+      if (!hasFilelistMerge) {
+        reasons.push("RAW.tar only (raw FASTQ inside the archive)");
+      }
     }
     if (isSpreadsheet(f.name) && !reasons.some((r) => r.includes("Excel"))) {
       reasons.push("Excel / Seurat objects (.xlsx, single-cell)");

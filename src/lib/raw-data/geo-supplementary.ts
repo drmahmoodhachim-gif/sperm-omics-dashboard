@@ -1,5 +1,9 @@
 import { geoSupplDirUrl, geoSupplFileUrl } from "./geo-path";
 import { extractSampleSupplements } from "./geo-sample-counts";
+import {
+  fetchGeoFilelistSamples,
+  geoFilelistMergeUrl,
+} from "./geo-filelist";
 import { toHttps, unquoteGeoCell as unquote } from "./geo-utils";
 
 export interface GeoSupplementaryFile {
@@ -126,6 +130,26 @@ export async function discoverGeoQuantFiles(
         score: score - 2,
         source: "sample",
         description: `Per-sample quant file (${s.sampleId}) — merged with others when needed`,
+      });
+    }
+  }
+
+  const filelistSamples = await fetchGeoFilelistSamples(accession);
+  if (filelistSamples.length >= 2) {
+    add({
+      name: `${accession.toUpperCase()}_merged_per_sample_quant`,
+      url: geoFilelistMergeUrl(accession),
+      score: 28,
+      source: "ftp",
+      description: `Merge ${filelistSamples.length} per-sample quant files from GEO filelist.txt (inside RAW.tar listing)`,
+    });
+    for (const s of filelistSamples.slice(0, 6)) {
+      add({
+        name: s.name,
+        url: s.url,
+        score: scoreQuantFilename(s.name) - 4,
+        source: "sample",
+        description: `Per-sample quant from filelist.txt (${s.sampleId})`,
       });
     }
   }
