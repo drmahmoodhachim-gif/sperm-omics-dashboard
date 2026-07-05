@@ -1,7 +1,14 @@
 const base = process.env.BASE_URL ?? "http://localhost:3002";
+const username = process.env.AUTH_USERNAME ?? "";
+const password = process.env.AUTH_PASSWORD ?? "";
 
 async function main() {
+  if (!username || !password) {
+    console.error("Set AUTH_USERNAME and AUTH_PASSWORD (e.g. from .env.local)");
+    process.exit(1);
+  }
   console.log("Base:", base);
+  console.log("User:", username);
 
   const noAuth = await fetch(`${base}/`, { redirect: "manual" });
   console.log("1. GET / unauthenticated:", noAuth.status, noAuth.headers.get("location"));
@@ -9,7 +16,7 @@ async function main() {
   const bad = await fetch(`${base}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: "spermomics", password: "wrong" }),
+    body: JSON.stringify({ username, password: "wrong-password" }),
   });
   console.log("2. Wrong password:", bad.status, await bad.json());
 
@@ -17,7 +24,7 @@ async function main() {
   const good = await fetch(`${base}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: "spermomics", password: "SpermOmics2026!" }),
+    body: JSON.stringify({ username, password }),
   });
   const setCookie = good.headers.getSetCookie?.() ?? [];
   for (const c of setCookie) {
