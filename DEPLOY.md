@@ -10,9 +10,8 @@
 
 Pushes to `master` run `.github/workflows/netlify-deploy.yml`:
 
-1. Build on **GitHub-hosted runners** (no local disk needed)
-2. `netlify build` pulls **production env vars** from the Netlify site
-3. `netlify deploy --prod --no-build` publishes to production
+1. Build on **GitHub-hosted runners** with `AUTH_*` from GitHub secrets (inlined via `next.config.ts`)
+2. `netlify deploy --prod --build` publishes HTML, `_next/static`, and server functions together
 
 One-time setup (already done if secrets exist):
 
@@ -20,7 +19,7 @@ One-time setup (already done if secrets exist):
 node scripts/setup-github-netlify-secrets.js
 ```
 
-Required GitHub secrets: `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`
+Required GitHub secrets: `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`, `AUTH_SECRET`, `AUTH_USERNAME`, `AUTH_PASSWORD`
 
 Optional: link GitHub natively in Netlify UI for deploy previews:
 https://app.netlify.com/projects/sperm-omics-dashboard/link
